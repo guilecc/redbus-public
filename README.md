@@ -1,84 +1,84 @@
 # RedBus: Local Intelligence. Absolute Privacy. Total Orchestration.
 
-RedBus é um **Hub de Assistente Autônomo Local** (Agnostic AI Hub) projetado para orquestrar sua vida digital com privacidade absoluta e inteligência proativa. Tudo roda localmente na sua máquina, garantindo que seus dados nunca saiam do seu controle.
+RedBus is a **Local Autonomous Work Assistant** (Agnostic AI Hub) designed to orchestrate your digital life with absolute privacy and proactive intelligence. Everything runs locally on your machine, ensuring your data never leaves your control.
 
 ---
 
-## Privacidade e Segurança "Zero-Trust"
-- **100% Local-First**: O RedBus vive na sua máquina. Zero servidores na nuvem, zero contas obrigatórias, zero rastreamento.
-- **Cofre de Tokens (Secure Vault)**: Armazenamento de chaves de API (Jira, GitHub, AWS, etc.) criptografado nativamente pelo sistema operacional.
-- **Isolamento por BrowserView**: As automações e acessos a sites ocorrem em instâncias isoladas e seguras, protegendo sua navegação principal.
-- **Banco de Dados Único**: Toda a sua "Alma" (perfil), memória e histórico são armazenados em um único arquivo SQLite criptografado (`.redbus`) com modo WAL para máxima performance.
+## "Zero-Trust" Privacy and Security
+- **100% Local-First**: RedBus lives on your machine. Zero cloud servers, zero mandatory accounts, zero tracking.
+- **Secure Vault**: Encrypted storage for API keys (Jira, GitHub, AWS, etc.) natively managed by the operating system.
+- **BrowserView Isolation**: Automations and website access occur in isolated and secure instances, protecting your main browsing session.
+- **Single Database**: Your entire "Soul" (profile), memory, and history are stored in a single encrypted SQLite file (`.redbus`) with WAL mode for maximum performance.
 
-## Orquestração Autônoma de Elite
-- **Arquitetura Maestro/Worker**: Flexibilidade total de papéis. Use modelos ultrarrápidos como o **Gemini 2.0 Flash** no papel de **Maestro** (Planejador Light), e direcione o poder bruto do **Claude 4.6 (Sonnet ou Opus)** ou do recém-lançado **Gemma 4** como **Worker** (Executor Inteligente).
-- **Protocolo Living Spec**: Uma engine de execução dinâmica que transforma instruções complexas em especificações mutáveis, permitindo que a IA ajuste o plano em tempo real conforme obtém resultados.
-- **Economia de Tokens**: Redução drástica de custos e overhead de contexto através de atualizações cirúrgicas e compactação inteligente de mensagens.
-- **Orquestração Agnóstica**: Troca dinâmica entre provedores de ponta (**Anthropic**, **Google Gemini**, **OpenAI**) e o estado da arte do LLM local com **Gemma 4** via **Ollama**, permitindo otimizar latência no planejamento e inteligência extrema na execução.
+## Elite Autonomous Orchestration
+- **Maestro/Worker Architecture**: Total role flexibility. Use ultra-fast models like **Gemini 2.0 Flash** as the **Maestro** (Light Planner), and direct the raw power of **Claude 4.6 (Sonnet or Opus)** or the newly released **Gemma 4** as the **Worker** (Intelligent Executor).
+- **Living Spec Protocol**: A dynamic execution engine that transforms complex instructions into mutable specifications, allowing the AI to adjust the plan in real-time as results are obtained.
+- **Token Economy**: Drastic reduction in costs and context overhead through surgical updates and intelligent message compression.
+- **Agnostic Orchestration**: Dynamic switching between top-tier providers (**Anthropic**, **Google Gemini**, **OpenAI**) and state-of-the-art local LLMs with **Gemma 4** via **Ollama**, optimizing planning latency and maximizing execution intelligence.
 
-## O Sistema de "Sentidos" (Environmental Sensors)
-O RedBus não apenas responde; ele **percebe** seu fluxo de trabalho através de sensores integrados:
-- **Olho Fotográfico (Vision Sensor)**: Captura periódica de tela com OCR integrado (Tesseract.js) para entender o que você está vendo.
-- **Sensor de Acessibilidade (UI Tree)**: Analisa a árvore de elementos do macOS para navegar e interagir com aplicativos nativos com precisão cirúrgica.
-- **Sensor de Janela Ativa**: Monitora qual aplicativo e documento você está usando para contextualizar sugestões.
-- **Sensor de Clipboard**: Acompanha o conteúdo da área de transferência para oferecer ações imediatas sobre o que foi copiado.
-- **Sensor Auditivo (Meeting Memory)**: Captura áudio do microfone e do sistema simultaneamente para documentar reuniões em tempo real. Veja mais em [Instruções de Drivers de Áudio](./DRIVERS_SETUP.md).
+## Environmental Sensors System
+RedBus doesn't just respond; it **perceives** your workflow through integrated sensors:
+- **Vision Sensor (Eye)**: Periodic screen capture with integrated OCR (Tesseract.js) to understand what you are seeing.
+- **Accessibility Sensor (UI Tree)**: Analyzes the macOS element tree to navigate and interact with native applications with surgical precision.
+- **Active Window Sensor**: Monitors which application and document you are using to contextualize suggestions.
+- **Clipboard Sensor**: Tracks clipboard content to offer immediate actions on copied items.
+- **Auditory Sensor (Meeting Memory)**: Captures audio from the microphone and system simultaneously to document meetings in real-time. Learn more in the [Audio Drivers Setup Guide](./DRIVERS_SETUP.md).
 
-## Motor de Proatividade (Proactivity Engine)
-- **Subconsciente Digital**: O RedBus monitora os sinais dos sensores em segundo plano e decide autonomamente quando intervir para ajudar, sem que você precise pedir.
-- **Níveis de Presença**: Ajuste de "OFF" a "HIGH" para definir o quanto a IA deve ser presente no seu dia a dia.
-- **Sugestões Contextuais**: Receba alertas, resumos ou execuções automáticas baseadas no que você está fazendo no momento.
+## Proactivity Engine
+- **Digital Subconscious**: RedBus monitors sensor signals in the background and autonomously decides when to intervene and help, without you having to ask.
+- **Presence Levels**: Adjust from "OFF" to "HIGH" to define how present the AI should be in your daily life.
+- **Contextual Suggestions**: Receive alerts, summaries, or automatic executions based on what you are doing at the moment.
 
-## Ata Viva & Meeting Intelligence
-- **Gravação Multicanal**: Captura áudio limpo de chamadas no Teams, Zoom, Meet e Slack processando o retorno do sistema.
-- **Transcrição Híbrida**: Escolha entre **Whisper Local** (privacidade total e zero custo) ou **Cloud Multimodal** (máxima performance com Gemini/OpenAI).
-- **Atas Estruturadas**: Geração automática de resumos, pontos de decisão e listas de tarefas (Action Items) integradas ao seu fluxo.
-- **Integração tl;dv**: Sincronização automática com reuniões gravadas em plataformas externas.
+## Meeting Intelligence & Automated Minutes
+- **Multi-channel Recording**: Captures clean audio from calls on Teams, Zoom, Meet, and Slack by processing system output.
+- **Hybrid Transcription**: Choose between **Local Whisper** (total privacy and zero cost) or **Multimodal Cloud** (maximum performance with Gemini/OpenAI).
+- **Structured Minutes**: Automatic generation of summaries, decision points, and action items integrated into your workflow.
+- **tl;dv Integration**: Automatic synchronization with meetings recorded on external platforms.
 
-## Memória Profunda & Inteligência de Arquivos
-- **Inteligência de Arquivos Locais**: Upload e análise instantânea de documentos (PDF, DOCX, XLSX, CSV, JSON, Markdown). A IA extrai o texto e o utiliza como contexto para suas respostas.
-- **OCR de Documentos e Imagens**: Suporte integrado para leitura de texto em imagens (PNG, JPG) e PDFs digitalizados através de processamento local (Tesseract.js).
-- **Fatos de Longo Prazo (MemPalace)**: Armazenamento persistente de informações sobre você, suas preferências e seu trabalho, filtrados por confiança e relevância histórica.
-- **Busca Semântica e FTS5**: Localize qualquer chat, imagem vista (OCR) ou transcrição de reunião instantaneamente com busca por texto completo em segundos.
-- **Arquivamento e Compactação**: Gerenciamento inteligente de histórico para manter o contexto da IA sempre limpo e eficiente, sem perder informações críticas.
+## Deep Memory & File Intelligence
+- **Local File Intelligence**: Instant upload and analysis of documents (PDF, DOCX, XLSX, CSV, JSON, Markdown). The AI extracts text and uses it as context for its responses.
+- **Document & Image OCR**: Integrated support for reading text in images (PNG, JPG) and scanned PDFs through local processing (Tesseract.js).
+- **Long-term Facts (MemPalace)**: Persistent storage of information about you, your preferences, and your work, filtered by confidence and historical relevance.
+- **Semantic Search & FTS5**: Instantly locate any chat, seen image (OCR), or meeting transcription with full-text search in seconds.
+- **Archiving & Compression**: Intelligent history management to keep AI context clean and efficient without losing critical information.
 
-## Hub de Produtividade e Automação
-- **Inbox Executiva (Unified Message Hub)**: Centro de comando unificado para gerenciar todas as comunicações e tarefas pendentes.
-- **Extração Determinística**: Monitoramento de mensagens não lidas no **Outlook 365**, **Microsoft Teams** e **WhatsApp Web** com 100% de confiabilidade, sem depender de navegação por IA.
-- **Classificação de Urgência**: IA treinada para filtrar o ruído, classificando mensagens automaticamente por nível de urgência (Emergencial, Importante, Informativo).
-- **Atalhos "Zero-Token"**: Conecte seus canais de comunicação com comandos simples como "entra no zap" ou "mostra meu outlook" sem gastar tokens de IA para a autenticação.
-- **Gerenciador de Rotinas (Cron Engine)**: Agende tarefas recorrentes, verificações de sistema ou backups com suporte a backoff e zonas temporais.
-- **Skill Forge (Python Executor)**: Biblioteca extensível de automações em Python que podem ser disparadas pela IA ou manualmente.
-- **Playwright Automation**: Navegador embutido capaz de realizar ações complexas na web (login, extração de dados, preenchimento de formulários).
+## Productivity & Automation Hub
+- **Executive Inbox (Unified Message Hub)**: A unified command center to manage all communications and pending tasks.
+- **Deterministic Extraction**: Monitoring of unread messages in **Outlook 365**, **Microsoft Teams**, and **WhatsApp Web** with 100% reliability, without relying on AI navigation.
+- **Urgency Classification**: AI trained to filter noise, automatically classifying messages by urgency level (Emergency, Important, Informative).
+- **"Zero-Token" Shortcuts**: Connect your communication channels with simple commands like "open whatsapp" or "show my outlook" without spending AI tokens for navigation.
+- **Routine Manager (Cron Engine)**: Schedule recurring tasks, system checks, or backups with backoff support and time zones.
+- **Skill Forge (Python Executor)**: An extensible library of Python automations that can be triggered by the AI or manually.
+- **Playwright Automation**: Built-in browser capable of performing complex web actions (login, data extraction, form filling).
 
-## Experiência Nativa e Estética Premium
-- **Console de Atividade**: Transparência total sobre o que a IA está "thinking" e fazendo em tempo real.
-- **Interface Terminal-First**: Chat fluído com feedback visual de progresso de tarefas agenticas.
-- **Widget Overlay**: Controle de gravação e sensores sempre à mão com uma interface flutuante discreta.
-- **Multi-idioma Nativo**: Suporte completo para Português (BR) e Inglês.
+## Native Experience & Premium Aesthetics
+- **Activity Console**: Full transparency on what the AI is "thinking" and doing in real-time.
+- **Terminal-First Interface**: Fluid chat with visual progress feedback for agentic tasks.
+- **Widget Overlay**: Recording and sensor controls always at hand with a discreet floating interface.
+- **Native Multi-language**: Full support for both English and Portuguese (BR).
 
 ---
 
-### Stack Tecnológica: O Futuro é Local
+### Tech Stack: The Future is Local
 - **Runtime**: Electron & Node.js
 - **Frontend**: React + Vite + Vanilla CSS
-- **Banco de Dados**: SQLite (better-sqlite3)
-- **IA**: Maestro/Worker Orchestration Loop (Gemma 4 & Cloud LLMs support)
-- **Automação**: Playwright & Python Child Processes
-- **Visão/Áudio**: Tesseract.js & Transformers.js (Whisper WASM)
+- **Database**: SQLite (better-sqlite3)
+- **AI**: Maestro/Worker Orchestration Loop (Gemma 4 & Cloud LLMs support)
+- **Automation**: Playwright & Python Child Processes
+- **Vision/Audio**: Tesseract.js & Transformers.js (Whisper WASM)
 
 ---
 
-## Licença
+## License
 
-Este projeto é licenciado sob a **Creative Commons Attribution-NonCommercial 4.0 International (CC BY-NC 4.0)**. 
+This project is licensed under the **Creative Commons Attribution-NonCommercial 4.0 International (CC BY-NC 4.0)**.
 
-Você é livre para:
-- **Compartilhar**: Copiar e redistribuir o material em qualquer suporte ou formato.
-- **Adaptar**: Remixar, transformar e criar a partir do material.
+You are free to:
+- **Share**: Copy and redistribute the material in any medium or format.
+- **Adapt**: Remix, transform, and build upon the material.
 
-Sob as seguintes condições:
-- **Atribuição**: Você deve dar o crédito apropriado e prover um link para a licença.
-- **Não Comercial**: Você **não pode** usar o material para fins comerciais.
+Under the following conditions:
+- **Attribution**: You must give appropriate credit and provide a link to the license.
+- **Non-Commercial**: You **may not** use the material for commercial purposes.
 
-Para mais detalhes, consulte o arquivo [LICENSE](./LICENSE).
+For more details, please refer to the [LICENSE](./LICENSE) file.

@@ -1,40 +1,40 @@
 # RedBus Audio Bridge: Setup and Usage
 
-O RedBus é capaz de interceptar e gravar o áudio do sistema (ex: chamadas no Teams, Zoom, Meet, Slack) para processar as suas atas de reunião localmente, mantendo total sigilo. O comportamento e os requisitos variam entre **macOS** e **Windows**.
+RedBus is capable of intercepting and recording system audio (e.g., calls on Teams, Zoom, Meet, Slack) to process meeting minutes locally, maintaining total confidentiality. Behavior and requirements vary between **macOS** and **Windows**.
 
 ---
 
-## 🍏 Usuários de macOS
+## 🍏 macOS Users
 
-A arquitetura de áudio do Mac não permite captura nativa da saída de som do sistema. Para resolver isso, o RedBus utiliza um driver de áudio virtual customizado, baseado no **BlackHole**.
+The Mac audio architecture does not allow native capture of system sound output. To resolve this, RedBus uses a custom virtual audio driver based on **BlackHole**.
 
-### 1. Instalação Manual do Driver (macOS)
+### 1. Manual Driver Installation (macOS)
 
-O driver é do tipo HAL (AudioServerPlugIn) e não exige modificações no SIP do macOS (System Integrity Protection). 
+The driver is a HAL (AudioServerPlugIn) type and does not require changes to macOS SIP (System Integrity Protection).
 
-Se você precisar instalar ou reinstalar de forma manual para desenvolvimento:
-1. Abra um terminal.
-2. Navegue até a pasta do driver:
+If you need to install or reinstall manually for development:
+1. Open a terminal.
+2. Navigate to the driver folder:
    ```bash
    cd drivers/redbus-audio-bridge
    ```
-3. Rode o script de instalação (uma senha de administrador será solicitada):
+3. Run the installation script (an administrator password will be requested):
    ```bash
    sudo ./scripts/install.sh
    ```
 
-### 2. Fluxo Automático no macOS
+### 2. Automatic Flow on macOS
 
-Você **não** precisa configurar nada manualmente nas preferências "Audio MIDI Setup" do Mac. 
+You **do not** need to manually configure anything in Mac's "Audio MIDI Setup" preferences.
 
-1. **Ativação da Captura:** Quando a reunião começar, clique em **Gravar** no Widget de Gravação do RedBus.
-2. **Dispositivo Agregado Automático:** O sistema cria silenciosamente um "Multi-Output Device" (Dispositivo de Saída Múltipla) que engloba as suas caixas normais e o `RedBusAudio`. O som sai para os seus fones ao mesmo tempo em que o driver copia o sinal.
-3. **Escuta Simultânea:** O app lê o fluxo do `RedBusAudio` enquanto você prossegue com a reunião sem interrupções.
-4. **Finalizando:** Ao parar a gravação, o RedBus destrói o Dispositivo de Saída Múltipla via script e restaura a sua saída de som padrão anterior.
+1. **Activation:** When the meeting starts, click **Record** in the RedBus Recording Widget.
+2. **Automatic Aggregate Device:** The system silently creates a "Multi-Output Device" that includes your normal speakers/headphones and the `RedBusAudio`. Sound plays through your headphones while the driver copies the signal.
+3. **Simultaneous Listening:** The app reads the `RedBusAudio` stream while you proceed with the meeting without interruption.
+4. **Finalizing:** When recording stops, RedBus destroys the Multi-Output Device via script and restores your previous default sound output.
 
-### 3. Desinstalação do Driver (macOS)
+### 3. Driver Uninstallation (macOS)
 
-Para remover por completo o driver virtual:
+To completely remove the virtual driver:
 ```bash
 cd drivers/redbus-audio-bridge
 sudo ./scripts/uninstall.sh
@@ -42,14 +42,14 @@ sudo ./scripts/uninstall.sh
 
 ---
 
-## 🪟 Usuários de Windows
+## 🪟 Windows Users
 
-Para usuários do Microsoft Windows, a arquitetura do sistema operacional (WASAPI Loopback) já permite capturar o áudio do sistema de forma nativa. 
+For Microsoft Windows users, the operating system architecture (WASAPI Loopback) already allows capturing system audio natively.
 
-**Nenhuma instalação de driver adicional é necessária.** 
+**No additional driver installation is required.**
 
-### Como utilizar:
-1. O RedBus reconhece que você está no Windows e habilita automaticamente a escuta do "Áudio do Sistema".
-2. Basta clicar em **Gravar** no Widget de Gravação durante a sua reunião.
-3. A engine do RedBus vai capturar a mescla de todo o áudio saindo do seu PC diretamente através das APIs nativas do sistema.
-4. Sem a necessidade de usar Dispositivos Virtuais ou Dispositivos Agregados, nenhuma saída é manipulada durante a escuta, garantindo uso 100% livre de conflitos.
+### How to use:
+1. RedBus recognizes you are on Windows and automatically enables "System Audio" listening.
+2. Simply click **Record** in the Recording Widget during your meeting.
+3. The RedBus engine will capture the mix of all audio coming out of your PC directly through native system APIs.
+4. Without the need for Virtual Devices or Aggregate Devices, no output is manipulated during listening, ensuring 100% conflict-free usage.
