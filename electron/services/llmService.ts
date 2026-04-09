@@ -62,6 +62,52 @@ CRITICAL RULES:
 
   const userPrompt = `Instruction: ${instruction}\n\nDOM Content:\n${trimmedDom.substring(0, 40000)}`;
 
+  // Ollama
+  if (workerModel.startsWith('ollama/')) {
+    const targetUrl = configs.ollamaUrl || 'http://localhost:11434';
+    const cleanModel = workerModel.replace('ollama/', '');
+    const response = await fetchWithTimeout(`${targetUrl}/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: cleanModel,
+        response_format: { type: 'json_object' },
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ]
+      })
+    });
+    if (!response.ok) throw new Error(`Ollama API Error: ${await response.text()}`);
+    const data = await response.json();
+    return data.choices[0].message.content;
+  }
+
+  // Ollama
+  if (workerModel.startsWith('ollama/')) {
+    const targetUrl = configs.ollamaUrl || 'http://localhost:11434';
+    const cleanModel = workerModel.replace('ollama/', '');
+    const response = await fetchWithTimeout(`${targetUrl}/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: cleanModel,
+        response_format: { type: 'json_object' },
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ]
+      })
+    });
+    if (!response.ok) throw new Error(`Ollama API Error: ${await response.text()}`);
+    const data = await response.json();
+    return data.choices[0].message.content;
+  }
+
   // Google Gemini
   if (workerModel.includes('gemini')) {
     if (!configs.googleKey) throw new Error('Google API Key is missing for worker');
@@ -135,29 +181,6 @@ CRITICAL RULES:
     return data.choices[0].message.content;
   }
 
-  // Ollama
-  if (workerModel.startsWith('ollama/')) {
-    const targetUrl = configs.ollamaUrl || 'http://localhost:11434';
-    const cleanModel = workerModel.replace('ollama/', '');
-    const response = await fetchWithTimeout(`${targetUrl}/v1/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        model: cleanModel,
-        response_format: { type: 'json_object' },
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt }
-        ]
-      })
-    });
-    if (!response.ok) throw new Error(`Ollama API Error: ${await response.text()}`);
-    const data = await response.json();
-    return data.choices[0].message.content;
-  }
-
   throw new Error(`Unsupported generic worker model: ${workerModel}`);
 }
 
@@ -171,6 +194,20 @@ export async function callWorkerRaw(db: any, systemPrompt: string, userPrompt: s
 
   const workerModel = configs.workerModel || 'gemini-2.5-flash';
   logActivity('orchestrator', `[Worker/Raw] Executando análise com ${workerModel}`);
+
+  // Ollama
+  if (workerModel.startsWith('ollama/')) {
+    const targetUrl = configs.ollamaUrl || 'http://localhost:11434';
+    const cleanModel = workerModel.replace('ollama/', '');
+    const response = await fetchWithTimeout(`${targetUrl}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: cleanModel, messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }] })
+    });
+    if (!response.ok) throw new Error(`Ollama API Error: ${await response.text()}`);
+    const data = await response.json();
+    return data.choices[0].message.content;
+  }
 
   if (workerModel.includes('gemini')) {
     if (!configs.googleKey) throw new Error('Google API Key is missing');
@@ -208,20 +245,6 @@ export async function callWorkerRaw(db: any, systemPrompt: string, userPrompt: s
       body: JSON.stringify({ model: workerModel, messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }] })
     });
     if (!response.ok) throw new Error(`OpenAI API Error: ${await response.text()}`);
-    const data = await response.json();
-    return data.choices[0].message.content;
-  }
-
-  // Ollama
-  if (workerModel.startsWith('ollama/')) {
-    const targetUrl = configs.ollamaUrl || 'http://localhost:11434';
-    const cleanModel = workerModel.replace('ollama/', '');
-    const response = await fetchWithTimeout(`${targetUrl}/v1/chat/completions`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: cleanModel, messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }] })
-    });
-    if (!response.ok) throw new Error(`Ollama API Error: ${await response.text()}`);
     const data = await response.json();
     return data.choices[0].message.content;
   }
@@ -432,6 +455,48 @@ STRATEGY:
 5. NEVER invent data. Only extract what is in the snapshot.
 6. Be efficient — every action returns a snapshot, so you always know the current state.`;
 
+  // Ollama
+  if (workerModel.startsWith('ollama/')) {
+    const targetUrl = configs.ollamaUrl || 'http://localhost:11434';
+    const cleanModel = workerModel.replace('ollama/', '');
+
+    const openAiTools = WORKER_TOOLS.map(t => ({
+      type: 'function',
+      function: {
+        name: t.name,
+        description: t.description,
+        parameters: t.input_schema
+      }
+    }));
+
+    const response = await fetchWithTimeout(`${targetUrl}/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: cleanModel,
+        messages: [{ role: 'system', content: systemMessage }, ...messages],
+        tools: openAiTools
+      })
+    });
+
+    if (!response.ok) throw new Error(`Ollama API Error: ${await response.text()}`);
+    const data = await response.json();
+    const message = data.choices[0].message;
+
+    if (message.tool_calls) {
+      return {
+        tool_calls: message.tool_calls.map((tc: any) => ({
+          id: tc.id,
+          name: tc.function.name,
+          args: typeof tc.function.arguments === 'string' ? JSON.parse(tc.function.arguments) : tc.function.arguments
+        }))
+      };
+    }
+    return { content: message.content };
+  }
+
   if (workerModel.includes('gemini')) {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${workerModel}:generateContent?key=${configs.googleKey}`;
 
@@ -537,48 +602,6 @@ STRATEGY:
       return {
         tool_calls: message.tool_calls.map((tc: any) => ({
           id: tc.id,
-          name: tc.function.name,
-          args: JSON.parse(tc.function.arguments)
-        }))
-      };
-    }
-    return { content: message.content };
-  }
-
-  // Ollama
-  if (workerModel.startsWith('ollama/')) {
-    const targetUrl = configs.ollamaUrl || 'http://localhost:11434';
-    const cleanModel = workerModel.replace('ollama/', '');
-
-    const openAiTools = WORKER_TOOLS.map(t => ({
-      type: 'function',
-      function: {
-        name: t.name,
-        description: t.description,
-        parameters: t.input_schema
-      }
-    }));
-
-    const response = await fetchWithTimeout(`${targetUrl}/v1/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        model: cleanModel,
-        messages: [{ role: 'system', content: systemMessage }, ...messages],
-        tools: openAiTools
-      })
-    });
-
-    if (!response.ok) throw new Error(`Ollama API Error: ${await response.text()}`);
-    const data = await response.json();
-    const message = data.choices[0].message;
-
-    if (message.tool_calls) {
-      return {
-        tool_calls: message.tool_calls.map((tc: any) => ({
-          id: tc.id, // Ollama might or might not send an id, but the OpenAI format dictates one.
           name: tc.function.name,
           args: JSON.parse(tc.function.arguments)
         }))

@@ -273,7 +273,7 @@ describe('Orchestrator Service - Maestro', () => {
   // ══════════════════════════════════════════════════════════
 
   it('6. E2E: Deve chamar Gemini real e retornar spec válido (FORMAT C conversacional)', async () => {
-    const GOOGLE_KEY = process.env.GOOGLE_API_KEY || 'AIzaSyD0yQjbTqMCKwIHRpuwLifHrZdivMMUS0M';
+    const GOOGLE_KEY = process.env.GOOGLE_API_KEY || 'REDACTED_API_KEY';
     // Use real DB
     const { initializeDatabase } = await import('../electron/database');
     const db = initializeDatabase(':memory:');
@@ -303,7 +303,7 @@ describe('Orchestrator Service - Maestro', () => {
   }, 30000); // 30s timeout for real API call
 
   it('7. Anti-loop: mensagens duplicadas devem ser removidas do contexto LLM', async () => {
-    const GOOGLE_KEY = process.env.GOOGLE_API_KEY || 'AIzaSyD0yQjbTqMCKwIHRpuwLifHrZdivMMUS0M';
+    const GOOGLE_KEY = process.env.GOOGLE_API_KEY || 'REDACTED_API_KEY';
     const { initializeDatabase } = await import('../electron/database');
     const { saveMessage } = await import('../electron/services/archiveService');
     const db = initializeDatabase(':memory:');
@@ -312,7 +312,7 @@ describe('Orchestrator Service - Maestro', () => {
       INSERT OR REPLACE INTO UserProfile (id, name, role, preferences, system_prompt_compiled)
       VALUES ('default', 'Guile', 'dev', 'conciso', 'Você é o RedBus. Responda em português.')
     `).run();
-    db.prepare(`UPDATE ProviderConfigs SET maestroModel = 'gemini-2.5-flash', googleKey = ? WHERE id = 1`).run(GOOGLE_KEY);
+    db.prepare(`UPDATE ProviderConfigs SET maestroModel = 'gemini-2.5-flash', googleKey = ? WHERE id = 1`).run('REDACTED_API_KEY');
 
     // Simulate loop: 5 identical error messages from assistant
     const errorMsg = 'O sensor de acessibilidade não está disponível neste build.';

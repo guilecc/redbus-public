@@ -666,7 +666,7 @@ export default function App() {
                     <OllamaSettings 
                       ollamaUrl={keys.ollamaUrl} 
                       setOllamaUrl={(url) => setKeys(k => ({ ...k, ollamaUrl: url }))} 
-                      onModelSet={(role, value) => setModels(curr => ({ ...curr, [role]: value }))} 
+                      onModelSet={handleChangeModel} 
                     />
 
                     <section className="settings-section">

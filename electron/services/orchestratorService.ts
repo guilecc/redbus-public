@@ -630,8 +630,30 @@ FINAL REMINDER: Your output MUST be valid JSON matching one of the formats above
   // Emit thinking events for the Maestro LLM call
   if (_currentRequestId) emitThinkingStart(_currentRequestId);
 
+  // Ollama
+  if (maestroModel.startsWith('ollama/')) {
+    const targetUrl = configs.ollamaUrl || 'http://localhost:11434';
+    const cleanModel = maestroModel.replace('ollama/', '');
+    const response = await fetchWithTimeout(`${targetUrl}/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: cleanModel,
+        response_format: { type: 'json_object' },
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPromptText }
+        ]
+      })
+    });
+    if (!response.ok) throw new Error(`Ollama API Error: ${await response.text()}`);
+    const data = await response.json();
+    rawResponse = data.choices[0].message.content;
+  }
   // Google Gemini
-  if (maestroModel.includes('gemini')) {
+  else if (maestroModel.includes('gemini')) {
     if (!configs.googleKey) throw new Error('Google API Key is missing for maestro');
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${maestroModel}:generateContent?key=${configs.googleKey}`;
     const response = await fetchWithTimeout(url, {
@@ -688,28 +710,6 @@ FINAL REMINDER: Your output MUST be valid JSON matching one of the formats above
       })
     });
     if (!response.ok) throw new Error(`OpenAI API Error: ${await response.text()}`);
-    const data = await response.json();
-    rawResponse = data.choices[0].message.content;
-  }
-  // Ollama
-  else if (maestroModel.startsWith('ollama/')) {
-    const targetUrl = configs.ollamaUrl || 'http://localhost:11434';
-    const cleanModel = maestroModel.replace('ollama/', '');
-    const response = await fetchWithTimeout(`${targetUrl}/v1/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        model: cleanModel,
-        response_format: { type: 'json_object' },
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPromptText }
-        ]
-      })
-    });
-    if (!response.ok) throw new Error(`Ollama API Error: ${await response.text()}`);
     const data = await response.json();
     rawResponse = data.choices[0].message.content;
   } else {
