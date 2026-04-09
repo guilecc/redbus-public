@@ -57,7 +57,8 @@ const ptBR: Translations = {
       worker: 'worker',
       maestro: 'maestro',
       reqLabel: 'Requisitos:',
-      descLabel: 'Descrição:'
+      descLabel: 'Descrição:',
+      workerWarning: 'Aviso: Este modelo é pequeno. Usá-lo como Worker pode ser lento ou instável para extrações complexas e geração de código.'
     },
 
     vault: {

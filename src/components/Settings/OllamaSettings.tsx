@@ -22,14 +22,16 @@ export function OllamaSettings({ ollamaUrl, setOllamaUrl, onModelSet }: Props) {
       label: 'Gemma 4 E2B (2.3B)',
       req: isPT ? '4-5 GB RAM (CPU/GPU Integrada)' : '4-5 GB RAM (CPU/Integrated GPU)',
       desc: isPT ? 'Versão mais leve. Ideal como Maestro conversacional.' : 'Lightest version. Ideal as conversational Maestro.',
-      role: 'maestro'
+      role: 'maestro',
+      isWeak: true
     },
     {
       id: 'gemma:7b',
       label: 'Gemma 4 E4B (4.5B)',
       req: isPT ? '5-6 GB RAM (GPUs Entrada)' : '5-6 GB RAM (Entry-level GPUs)',
       desc: isPT ? 'Rápido em PCs modernos. Ótimo como Maestro diário.' : 'Fast on modern PCs. Great as daily Maestro.',
-      role: 'maestro'
+      role: 'maestro',
+      isWeak: true
     },
     {
       id: 'gemma:27b',
@@ -199,6 +201,11 @@ export function OllamaSettings({ ollamaUrl, setOllamaUrl, onModelSet }: Props) {
                   >
                     <Download size={14} /> {t.settings.ollama.download}
                   </button>
+                )}
+                {isInstalled && (model as any).isWeak && (
+                  <p style={{ fontSize: '10px', color: '#ff4b2b', marginTop: '8px', fontStyle: 'italic', opacity: 0.8 }}>
+                    {t.settings.ollama.workerWarning}
+                  </p>
                 )}
               </div>
             </div>

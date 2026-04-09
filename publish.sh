@@ -35,6 +35,10 @@ done
 if [[ -z "$VERSION" ]]; then
   VERSION=$(node -p "require('./package.json').version" 2>/dev/null || echo "")
   [[ -z "$VERSION" ]] && error "Could not read version from package.json"
+else
+  # Update package.json version if provided via arg
+  log "Updating package.json to v$VERSION"
+  npm version "$VERSION" --no-git-tag-version
 fi
 
 # If no message given, generate one

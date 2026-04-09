@@ -53,6 +53,7 @@ export interface Translations {
       maestro: string;
       reqLabel: string;
       descLabel: string;
+      workerWarning: string;
     };
 
     vault: {
@@ -251,7 +252,8 @@ const en: Translations = {
       worker: 'worker',
       maestro: 'maestro',
       reqLabel: 'Requirements:',
-      descLabel: 'Description:'
+      descLabel: 'Description:',
+      workerWarning: 'Warning: This model is small. Using it as Worker might be slow or unreliable for complex extractions and code generation.'
     },
 
     vault: {
