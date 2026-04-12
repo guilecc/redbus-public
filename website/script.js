@@ -6,7 +6,7 @@ const translations = {
         hero_title: "Autonomous Intelligence\nThat Perceives You.",
         hero_subtitle: "Equipped with advanced environmental sensors to proactively assist your workflow. Total orchestration, 100% local privacy.",
         download_btn: "Download Latest Release",
-        download_note: "Version 1.0.0. Free forever.",
+        download_note: "Version 1.0.2. Free forever.",
         
         section_features_title: "Unparalleled Capabilities",
         feat_privacy_title: "Zero-Trust Privacy",
@@ -50,6 +50,10 @@ const translations = {
         modal_step4: "Restart the audio system with this command:",
         modal_note: "Admin password will be required for the terminal command.",
         
+        section_trouble_title: "Troubleshooting",
+        trouble_mac_title: "macOS \"App is damaged\" message",
+        trouble_mac_desc: "If you see a message saying RedBus is damaged, it's actually Gatekeeper blocking the unsigned app. Run this in your Terminal to fix:",
+        
         footer_text: "Built for privacy and absolute control."
     },
     pt: {
@@ -59,7 +63,7 @@ const translations = {
         hero_title: "Inteligência Autônoma\nQue Percebe Você.",
         hero_subtitle: "Equipado com sensores ambientais avançados para agir proativamente no seu fluxo de trabalho. Orquestração total, 100% local.",
         download_btn: "Baixar Última Versão",
-        download_note: "Versão 1.0.0. Grátis para sempre.",
+        download_note: "Versão 1.0.2. Grátis para sempre.",
         
         section_features_title: "Capacidades Incomparáveis",
         feat_privacy_title: "Privacidade Zero-Trust",
@@ -103,6 +107,10 @@ const translations = {
         modal_step4: "Reinicie o sistema de áudio com o comando:",
         modal_note: "A senha de administrador será solicitada para rodar o comando no terminal.",
         
+        section_trouble_title: "Resolução de Problemas",
+        trouble_mac_title: "Mensagem \"App danificado\" no macOS",
+        trouble_mac_desc: "Se você vir uma mensagem dizendo que o RedBus está danificado, na verdade é o Gatekeeper bloqueando o app não assinado. Rode isso no seu Terminal para corrigir:",
+
         footer_text: "Construído para privacidade e controle absoluto."
     }
 };

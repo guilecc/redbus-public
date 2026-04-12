@@ -477,6 +477,32 @@ footer {
     color: var(--accent);
 }
 
+.alert.warning {
+    background: rgba(234, 179, 8, 0.1);
+    border-color: rgba(234, 179, 8, 0.3);
+    color: #e2e8f0;
+}
+
+.alert.warning i {
+    color: #eab308;
+}
+
+.trouble-container {
+    max-width: 800px;
+    margin: 0 auto;
+}
+
+.alert-content code {
+    display: block;
+    background: var(--bg-void);
+    color: var(--accent);
+    padding: 0.75rem;
+    border-radius: 4px;
+    margin-top: 0.75rem;
+    font-size: 0.9rem;
+    border: 1px solid var(--border);
+}
+
 /* Responsive */
 @media (max-width: 768px) {
     .hero-content h1 {

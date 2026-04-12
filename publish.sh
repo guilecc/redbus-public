@@ -69,6 +69,13 @@ $GH_BIN auth status &>/dev/null || error "Not authenticated with gh. Run: gh aut
 echo -e "${CYAN}━━━ Step 1/4: Building for all platforms ━━━${NC}"
 cd "$PRIVATE_DIR"
 
+log "Cleaning release folder..."
+rm -rf release/*
+
+log "Updating website version in website/index.html..."
+# Update the version in the HTML note (looks for "Version X.X.X.")
+sed -i '' "s/Version [0-9]\{1,\}\.[0-9]\{1,\}\.[0-9]\{1,\}\./Version $VERSION./g" website/index.html
+
 log "Running: npm run build (mac + win + linux)"
 npm run build:mac  && success "macOS build done"
 npm run build:win  && success "Windows build done"

@@ -1,14 +1,15 @@
 {
   "name": "redbus",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "RedBus - Assistente de Trabalho Autônomo Local",
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "electron-builder install-app-deps && vite",
-    "build": "tsc && vite build && electron-builder",
-    "build:mac": "tsc && vite build && electron-builder --mac",
-    "build:win": "tsc && vite build && electron-builder --win",
-    "build:linux": "tsc && vite build && electron-builder --linux",
+    "clean": "rm -rf release dist dist-electron",
+    "build": "npm run clean && tsc && vite build && electron-builder",
+    "build:mac": "npm run clean && tsc && vite build && electron-builder --mac",
+    "build:win": "npm run clean && tsc && vite build && electron-builder --win",
+    "build:linux": "npm run clean && tsc && vite build && electron-builder --linux",
     "preview": "vite preview",
     "postinstall": "electron-builder install-app-deps",
     "rebuild:electron": "electron-builder install-app-deps",
@@ -44,9 +45,12 @@
         "zip"
       ],
       "icon": "icons/macos/icon.icns",
-      "category": "public.app-category.productivity"
+      "category": "public.app-category.productivity",
+      "gatekeeperAssess": false,
+      "hardenedRuntime": true
     },
     "win": {
+      "executableName": "RedBus",
       "target": [
         "nsis",
         "portable"
@@ -55,7 +59,11 @@
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "RedBus",
+      "artifactName": "${productName}-Setup-${version}.${ext}"
     },
     "linux": {
       "target": [
