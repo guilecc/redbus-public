@@ -138,13 +138,14 @@ echo -e "${CYAN}━━━ Step 4/4: Creating GitHub Release $TAG ━━━${NC}"
 
 RELEASE_DIR="$PRIVATE_DIR/release"
 
-# Collect release assets (skip unpacked dirs, blockmap, yml debug files)
+# Collect release assets
 ASSETS=()
 while IFS= read -r -d '' file; do
   ASSETS+=("$file")
 done < <(find "$RELEASE_DIR" -maxdepth 1 -type f \
-  \( -name "*.exe" -o -name "*.dmg" -o -name "*.zip" -o -name "*.AppImage" -o -name "*.deb" \) \
+  \( -name "*.exe" -o -name "*.dmg" -o -name "*.zip" -o -name "*.AppImage" -o -name "*.deb" -o -name "*.pkg" \) \
   -not -name "*.blockmap" \
+  -not -name "latest*.yml" \
   -print0)
 
 if [[ ${#ASSETS[@]} -eq 0 ]]; then
