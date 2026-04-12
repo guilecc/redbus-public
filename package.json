@@ -1,7 +1,11 @@
 {
   "name": "redbus",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "RedBus - Assistente de Trabalho Autônomo Local",
+  "author": {
+    "name": "Guile Cardoso",
+    "email": "guile@redbus.app"
+  },
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "electron-builder install-app-deps && vite",
