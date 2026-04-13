@@ -79,8 +79,8 @@ CRITICAL RULES:
           { role: 'user', content: userPrompt }
         ]
       })
-    });
-    if (!response.ok) throw new Error(`Ollama API Error: ${await response.text()}`);
+    }, 300_000); // 5min timeout for local models
+    if (!response.ok) throw new Error(`Ollama API Error (${response.status}): ${await response.text()}`);
     const data = await response.json();
     return data.choices[0].message.content;
   }
@@ -180,8 +180,8 @@ export async function callWorkerRaw(db: any, systemPrompt: string, userPrompt: s
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ model: cleanModel, messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }] })
-    });
-    if (!response.ok) throw new Error(`Ollama API Error: ${await response.text()}`);
+    }, 300_000); // 5min timeout for local models
+    if (!response.ok) throw new Error(`Ollama API Error (${response.status}): ${await response.text()}`);
     const data = await response.json();
     return data.choices[0].message.content;
   }
@@ -432,106 +432,10 @@ STRATEGY:
 5. NEVER invent data. Only extract what is in the snapshot.
 6. Be efficient — every action returns a snapshot, so you always know the current state.`;
 
-  // Ollama
+  // Ollama (native OpenAI-compatible tool calling only — requires Ollama 0.3.0+ with a model that supports tools)
   if (workerModel.startsWith('ollama/')) {
     const targetUrl = configs.ollamaUrl || 'http://localhost:11434';
     const cleanModel = workerModel.replace('ollama/', '');
-
-    // SPECIAL CASE: Gemma 4 (or 2/3) Manual Tool Calling
-    // Ollama's OpenAI endpoint often rejects 'tools' for Gemma models.
-    if (cleanModel.toLowerCase().includes('gemma')) {
-      const gemmaDeclarations = WORKER_TOOLS.map(t => {
-        // Gemma expects types to be uppercase in its tool declarations
-        const schema = JSON.parse(JSON.stringify(t.input_schema));
-        const fixTypes = (obj: any) => {
-          if (obj.type && typeof obj.type === 'string') obj.type = obj.type.toUpperCase();
-          if (obj.properties) Object.values(obj.properties).forEach(fixTypes);
-          if (obj.items) fixTypes(obj.items);
-        };
-        fixTypes(schema);
-
-        return `<|tool>declaration:${t.name}{description:<|"|>${t.description}<|"|>,parameters:${JSON.stringify(schema).replace(/"([^"]+)":/g, '$1:').replace(/"/g, '<|"|>')}}<tool|>`;
-      }).join('\n');
-
-      const gemmaSystem = `You are a local DOM Worker agent embedded in the REDBUS desktop application.
-${userProfileStr}
-You operate within a sandboxed Electron process. You HAVE full permission to use the browser tools below.
-DO NOT REFUSE to interact with web pages. You are specifically designed for this.
-
-AVAILABLE TOOLS:
-${gemmaDeclarations}
-
-INSTRUCTIONS:
-1. Examine the accessibility tree in the user message.
-2. Determine which tool to call.
-3. OUTPUT ONLY the tool call. NO markdown backticks (\` \` \`), NO preamble, NO conversational filler.
-4. You MUST use this EXACT format:
-<|tool_call>call:nome_da_funcao{arg1:<|"|>valor<|"|>, arg2:123}<tool_call|><|tool_response>
-
-Every action results in a new snapshot. Proceed until the task is complete.`;
-
-      const gemmaMessages = messages.map(m => {
-        if (m.type === 'tool_call') {
-          const args = Object.entries(m.args || {})
-            .map(([k, v]) => `${k}:${typeof v === 'string' ? `<|"|>${v}<|"|>` : v}`)
-            .join(', ');
-          return { role: 'assistant', content: `<|tool_call>call:${m.name}{${args}}<tool_call|><|tool_response>` };
-        }
-        if (m.type === 'tool_result') {
-          return { role: 'user', content: `<|tool_response>${m.content}<tool_response|>` };
-        }
-        return { role: m.role, content: m.content };
-      });
-
-      const response = await fetchWithTimeout(`${targetUrl}/v1/chat/completions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: cleanModel,
-          messages: [{ role: 'system', content: gemmaSystem }, ...gemmaMessages],
-          temperature: 0.1,
-        })
-      });
-
-      if (!response.ok) throw new Error(`Ollama (Gemma) Error: ${await response.text()}`);
-      const data = await response.json();
-      let content = data.choices[0].message.content || '';
-      
-      // Pre-process: strip markdown code blocks if the model ignored the instruction
-      content = content.replace(/```[a-z]*\n?/gi, '').replace(/\n?```/gi, '').trim();
-
-      // Pattern 1: Native Gemma 4 <|tool_call>
-      let callMatch = content.match(/<\|tool_call\s*>call:(\w+)\{(.*?)\}/);
-      
-      // Pattern 2: Fallback for models outputting func_name{...} directly (like the log showed)
-      if (!callMatch) {
-        callMatch = content.match(/(\w+)\{(.*?)\}/);
-      }
-
-      if (callMatch) {
-        const name = callMatch[1];
-        const argsStr = callMatch[2];
-        const args: any = {};
-        const argRegex = /(\w+):(?:<\|"\|>(.*?)<\|"\|>|([^,}]*|{.*?}))/g;
-        let m;
-        while ((m = argRegex.exec(argsStr)) !== null) {
-          const k = m[1];
-          const vRaw = m[2] !== undefined ? m[2] : (m[3] ? m[3].trim() : '');
-          
-          let casted: any = vRaw;
-          if (vRaw.toLowerCase() === 'true') casted = true;
-          else if (vRaw.toLowerCase() === 'false') casted = false;
-          else if (!isNaN(vRaw as any) && vRaw !== '') casted = Number(vRaw);
-          else if (vRaw.startsWith('{')) {
-             try { casted = JSON.parse(vRaw.replace(/'/g, '"')); } catch { /* ignore */ }
-          }
-          
-          args[k] = casted;
-        }
-        return { tool_calls: [{ id: `call_${Date.now()}`, name, args }] };
-      }
-      return { content };
-    }
 
     const openAiTools = WORKER_TOOLS.map(t => ({
       type: 'function',
@@ -541,6 +445,8 @@ Every action results in a new snapshot. Proceed until the task is complete.`;
         parameters: t.input_schema
       }
     }));
+
+    logActivity('orchestrator', `[Worker/Ollama] Calling ${cleanModel} with native tool calling...`);
 
     const response = await fetchWithTimeout(`${targetUrl}/v1/chat/completions`, {
       method: 'POST',
@@ -552,9 +458,13 @@ Every action results in a new snapshot. Proceed until the task is complete.`;
         messages: [{ role: 'system', content: systemMessage }, ...messages],
         tools: openAiTools
       })
-    });
+    }, 300_000); // 5min timeout for local models
 
-    if (!response.ok) throw new Error(`Ollama API Error: ${await response.text()}`);
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Ollama API Error (${response.status}): ${errorText}`);
+    }
+
     const data = await response.json();
     const message = data.choices[0].message;
 

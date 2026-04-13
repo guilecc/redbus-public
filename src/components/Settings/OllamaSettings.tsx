@@ -6,53 +6,46 @@ interface Props {
   ollamaUrl: string;
   setOllamaUrl: (url: string) => void;
   onModelSet: (role: 'workerModel' | 'maestroModel', value: string) => void;
+  onInstalledChange?: (models: string[]) => void;
 }
 
-export function OllamaSettings({ ollamaUrl, setOllamaUrl, onModelSet }: Props) {
+export function OllamaSettings({ ollamaUrl, setOllamaUrl, onModelSet, onInstalledChange }: Props) {
   const { t } = useTranslation();
   const [status, setStatus] = useState<boolean | null>(null);
   const [installed, setInstalled] = useState<string[]>([]);
   const [downloads, setDownloads] = useState<Record<string, { status: string; pct: number }>>({});
 
-  const isPT = t.settings.title === 'configurações'; // Simple check to localize data if not fully parameterized
+  useEffect(() => {
+    if (onInstalledChange) onInstalledChange(installed);
+  }, [installed, onInstalledChange]);
 
-  const GEMMA_MODELS = [
-    {
-      id: 'gemma:2b',
-      label: 'Gemma 4 E2B (2.3B)',
-      req: isPT ? '4-5 GB RAM (CPU/GPU Integrada)' : '4-5 GB RAM (CPU/Integrated GPU)',
-      desc: isPT ? 'Versão mais leve. Ideal como Maestro conversacional.' : 'Lightest version. Ideal as conversational Maestro.',
-      role: 'maestro',
-      isWeak: true
-    },
-    {
-      id: 'gemma:7b',
-      label: 'Gemma 4 E4B (4.5B)',
-      req: isPT ? '5-6 GB RAM (GPUs Entrada)' : '5-6 GB RAM (Entry-level GPUs)',
-      desc: isPT ? 'Rápido em PCs modernos. Ótimo como Maestro diário.' : 'Fast on modern PCs. Great as daily Maestro.',
-      role: 'maestro',
-      isWeak: true
-    },
-    {
-      id: 'gemma:27b',
-      label: 'Gemma 4 26B A4B (MoE)',
-      req: isPT ? '16-18 GB VRAM (M-Series / RTX 3090+)' : '16-18 GB VRAM (M-Series / RTX 3090+)',
-      desc: isPT ? 'Exige hardware robusto. Ideal como Worker executor.' : 'Requires robust hardware. Ideal as executor Worker.',
-      role: 'worker'
-    },
-    {
-      id: 'gemma:70b',
-      label: 'Gemma 4 31B (Dense)',
-      req: isPT ? '17-20 GB VRAM (Workstations)' : '17-20 GB VRAM (Workstations)',
-      desc: isPT ? 'Capacidade lógica máxima. Worker de elite local.' : 'Max logical capacity. Elite local Worker.',
-      role: 'worker'
-    }
+  const LLM_CATALOG = [
+    // GLM 5.1
+    { id: 'glm4:2b', label: 'GLM 5.1 (2B)', family: 'GLM', req: '4GB', role: 'maestro', isWeak: true },
+    { id: 'glm4:9b', label: 'GLM 5.1 (9B)', family: 'GLM', req: '10GB', role: 'worker' },
+    { id: 'glm4:24b', label: 'GLM 5.1 (24B)', family: 'GLM', req: '18GB', role: 'worker' },
+    // Nemotron
+    { id: 'nemotron-cascade-2:30b', label: 'Nemotron Cascade 2 (30B)', family: 'Nvidia', req: '24GB', role: 'worker' },
+    // Qwen 3.5
+    { id: 'qwen3.5:0.8b', label: 'Qwen 3.5 (0.8B)', family: 'Qwen', req: '1GB', role: 'maestro', isWeak: true },
+    { id: 'qwen3.5:2b', label: 'Qwen 3.5 (2B)', family: 'Qwen', req: '2.7GB', role: 'maestro', isWeak: true },
+    { id: 'qwen3.5:4b', label: 'Qwen 3.5 (4B)', family: 'Qwen', req: '3.4GB', role: 'maestro' },
+    { id: 'qwen3.5:9b', label: 'Qwen 3.5 (9B)', family: 'Qwen', req: '6.6GB', role: 'worker' },
+    { id: 'qwen3.5:27b', label: 'Qwen 3.5 (27B)', family: 'Qwen', req: '17GB', role: 'worker' },
+    { id: 'qwen3.5:35b', label: 'Qwen 3.5 (35B)', family: 'Qwen', req: '24GB', role: 'worker' },
+    { id: 'qwen3.5:122b', label: 'Qwen 3.5 (122B)', family: 'Qwen', req: '81GB', role: 'worker' },
+    // Gemma 4
+    { id: 'gemma4:e2b', label: 'Gemma 4 (E2B)', family: 'Google', req: '7.2GB', role: 'maestro', isWeak: true },
+    { id: 'gemma4:e4b', label: 'Gemma 4 (E4B)', family: 'Google', req: '9.6GB', role: 'maestro' },
+    { id: 'gemma4:26b', label: 'Gemma 4 (26B)', family: 'Google', req: '18GB', role: 'worker' },
+    { id: 'gemma4:31b', label: 'Gemma 4 (31B)', family: 'Google', req: '20GB', role: 'worker' },
+    { id: 'gemma4:31b-cloud', label: 'Gemma 4 (31B Cloud)', family: 'Google', req: 'API', role: 'worker' },
   ];
 
   useEffect(() => {
     checkStatus();
     const interval = setInterval(checkStatus, 5000);
-    
+
     if (window.redbusAPI?.onOllamaPullProgress) {
       window.redbusAPI.onOllamaPullProgress((data) => {
         setDownloads(prev => {
@@ -61,7 +54,7 @@ export function OllamaSettings({ ollamaUrl, setOllamaUrl, onModelSet }: Props) {
             next[data.model] = { status: 'error', pct: 0 };
           } else if (data.status === 'success') {
             delete next[data.model];
-            checkStatus(); // Refetch list
+            checkStatus();
           } else {
             const pct = data.total ? Math.round((data.completed || 0) / data.total * 100) : 0;
             next[data.model] = { status: data.status, pct };
@@ -113,14 +106,14 @@ export function OllamaSettings({ ollamaUrl, setOllamaUrl, onModelSet }: Props) {
       <div className="form-group" style={{ marginBottom: '16px' }}>
         <label>{t.settings.ollama.url}</label>
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-          <input 
-            type="text" 
-            value={ollamaUrl} 
+          <input
+            type="text"
+            value={ollamaUrl}
             onChange={(e) => handlePullUrl(e.target.value)}
             style={{ flex: 1 }}
           />
           <div style={{
-            display: 'flex', alignItems: 'center', gap: '6px', 
+            display: 'flex', alignItems: 'center', gap: '6px',
             fontSize: '12px', fontWeight: 600,
             color: status === true ? '#10b981' : status === false ? '#ef4444' : '#888'
           }}>
@@ -128,89 +121,75 @@ export function OllamaSettings({ ollamaUrl, setOllamaUrl, onModelSet }: Props) {
             {status === true ? t.settings.ollama.online : status === false ? t.settings.ollama.offline : t.settings.ollama.checking}
           </div>
         </div>
-        {status === false && (
-          <p style={{ fontSize: '12px', color: '#888', marginTop: '4px' }}>
-            {t.settings.ollama.hint}
-          </p>
-        )}
       </div>
 
-      <div className="ollama-cards-grid" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: '12px' }}>
-        {GEMMA_MODELS.map(model => {
-          const isInstalled = installed.some(name => name.startsWith(model.id));
-          const dl = downloads[model.id];
+      <div className="ollama-list-container" style={{
+        background: 'rgba(255,255,255,0.02)',
+        border: '1px solid rgba(255,255,255,0.05)',
+        borderRadius: '8px',
+        maxHeight: '340px',
+        overflowY: 'auto'
+      }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
+          <thead style={{ position: 'sticky', top: 0, background: '#111', borderBottom: '1px solid rgba(255,255,255,0.1)', zIndex: 10 }}>
+            <tr>
+              <th style={{ textAlign: 'left', padding: '10px 12px', color: 'var(--accent)', textTransform: 'uppercase', letterSpacing: '1px' }}>MODEL</th>
+              <th style={{ textAlign: 'left', padding: '10px 12px', color: 'var(--text-ghost)', textTransform: 'uppercase' }}>FAMILY</th>
+              <th style={{ textAlign: 'left', padding: '10px 12px', color: 'var(--text-ghost)', textTransform: 'uppercase' }}>REQ</th>
+              <th style={{ textAlign: 'right', padding: '10px 12px', color: 'var(--text-ghost)', textTransform: 'uppercase' }}>ACTION</th>
+            </tr>
+          </thead>
+          <tbody>
+            {LLM_CATALOG.map(model => {
+              const isInstalled = installed.some(name => name.startsWith(model.id));
+              const dl = downloads[model.id];
 
-          return (
-            <div key={model.id} style={{
-              background: 'rgba(255,255,255,0.03)',
-              border: `1px solid ${isInstalled ? 'rgba(255,107,43,0.3)' : 'rgba(255,255,255,0.1)'}`,
-              borderRadius: '8px',
-              padding: '12px',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '8px'
-            }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                <strong style={{ fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  {model.label}
-                  {isInstalled && <CheckCircle2 size={14} color="#ff6b2b" />}
-                </strong>
-                <span style={{ fontSize: '10px', background: 'rgba(255,255,255,0.1)', padding: '2px 6px', borderRadius: '4px' }}>
-                  {model.role === 'worker' ? t.settings.ollama.worker : t.settings.ollama.maestro}
-                </span>
-              </div>
-              <p style={{ fontSize: '11px', color: '#aaa', margin: 0 }}>
-                <strong>{t.settings.ollama.reqLabel}</strong> {model.req}
-              </p>
-              <p style={{ fontSize: '12px', color: '#ccc', margin: 0 }}>{model.desc}</p>
-              
-              <div style={{ marginTop: 'auto', paddingTop: '8px' }}>
-                {dl ? (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: '#ff6b2b' }}>
-                      <span>{dl.status}</span>
-                      <span>{dl.pct}%</span>
+              return (
+                <tr key={model.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)', transition: 'background 0.2s' }} className="table-row-hover">
+                  <td style={{ padding: '10px 12px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <span style={{ color: isInstalled ? 'var(--text)' : 'var(--text-dim)' }}>{model.label}</span>
+                      {isInstalled && <CheckCircle2 size={12} color="var(--accent)" />}
                     </div>
-                    <div style={{ height: '4px', background: 'rgba(255,255,255,0.1)', borderRadius: '2px', overflow: 'hidden' }}>
-                      <div style={{ height: '100%', width: `${dl.pct}%`, background: '#ff6b2b', transition: 'width 0.3s ease' }} />
-                    </div>
-                  </div>
-                ) : isInstalled ? (
-                  <div style={{ display: 'flex', gap: '6px' }}>
-                    <button 
-                      className="save-btn" 
-                      style={{ flex: 1, background: 'rgba(255,107,43,0.1)', border: '1px solid rgba(255,107,43,0.3)', color: '#ff6b2b', fontSize: '11px', padding: '4px 0' }}
-                      onClick={() => onModelSet('maestroModel', `ollama/${model.id}`)}
-                    >
-                      {t.settings.ollama.setMaestro}
-                    </button>
-                    <button 
-                      className="save-btn" 
-                      style={{ flex: 1, background: 'rgba(255,107,43,0.1)', border: '1px solid rgba(255,107,43,0.3)', color: '#ff6b2b', fontSize: '11px', padding: '4px 0' }}
-                      onClick={() => onModelSet('workerModel', `ollama/${model.id}`)}
-                    >
-                      {t.settings.ollama.setWorker}
-                    </button>
-                  </div>
-                ) : (
-                  <button 
-                    className="save-btn" 
-                    style={{ width: '100%', display: 'flex', gap: '6px', justifyContent: 'center' }}
-                    onClick={() => handleDownload(model.id)}
-                    disabled={!status}
-                  >
-                    <Download size={14} /> {t.settings.ollama.download}
-                  </button>
-                )}
-                {isInstalled && (model as any).isWeak && (
-                  <p style={{ fontSize: '10px', color: '#ff4b2b', marginTop: '8px', fontStyle: 'italic', opacity: 0.8 }}>
-                    {t.settings.ollama.workerWarning}
-                  </p>
-                )}
-              </div>
-            </div>
-          );
-        })}
+                  </td>
+                  <td style={{ padding: '10px 12px', color: 'var(--text-ghost)' }}>{model.family}</td>
+                  <td style={{ padding: '10px 12px', color: 'var(--text-ghost)' }}>{model.req}</td>
+                  <td style={{ padding: '10px 12px', textAlign: 'right' }}>
+                    {dl ? (
+                      <div style={{ fontSize: '10px', color: 'var(--accent)', fontWeight: 600 }}>{dl.status} {dl.pct}%</div>
+                    ) : isInstalled ? (
+                      <div style={{ display: 'flex', gap: '4px', justifyContent: 'flex-end' }}>
+                        <button
+                          className="save-btn"
+                          style={{ fontSize: '9px', padding: '2px 8px', height: '22px' }}
+                          onClick={() => onModelSet('maestroModel', `ollama/${model.id}`)}
+                        >
+                          MAE
+                        </button>
+                        <button
+                          className="save-btn"
+                          style={{ fontSize: '9px', padding: '2px 8px', height: '22px' }}
+                          onClick={() => onModelSet('workerModel', `ollama/${model.id}`)}
+                        >
+                          WRK
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        className="save-btn"
+                        style={{ fontSize: '9px', padding: '2px 10px', color: 'var(--accent)', height: '22px' }}
+                        onClick={() => handleDownload(model.id)}
+                        disabled={!status}
+                      >
+                        DOWNLOAD
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
     </section>
   );

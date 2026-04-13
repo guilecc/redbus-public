@@ -279,7 +279,7 @@ async function _createSpecFromPromptInner(db: any, userPrompt: string | any[], f
   if (!configs) throw new Error('Provider configs not found');
 
   const maestroModel = configs.maestroModel || 'claude-3-7-sonnet-20250219';
-  logActivity('orchestrator', `[Maestro] Iniciando orquestração com ${maestroModel}`);
+  logActivity('orchestrator', `[Maestro] Automação via ${maestroModel}`);
 
   let userProfilePrompt = '';
   let inOnboarding = false;
@@ -292,7 +292,7 @@ async function _createSpecFromPromptInner(db: any, userPrompt: string | any[], f
       inOnboarding = true;
     }
   } catch (e) { inOnboarding = true; }
-  
+
   userProfilePrompt += getLanguagePromptDirective(db);
 
   let systemPrompt = '';
@@ -601,7 +601,7 @@ FINAL REMINDER: Your output MUST be valid JSON matching one of the formats above
     // Post-onboarding: build from DB (4-tier context: facts + summary + recent + retrieved)
     const rawPromptText = Array.isArray(userPrompt) ? userPrompt[userPrompt.length - 1]?.content || '' : String(userPrompt);
     const contextBlock = buildContextFromDB(db, rawPromptText);
-    
+
     // Append File Contents if provided
     let fileAttachmentsText = '';
     if (filePaths && filePaths.length > 0) {
@@ -634,6 +634,7 @@ FINAL REMINDER: Your output MUST be valid JSON matching one of the formats above
   if (maestroModel.startsWith('ollama/')) {
     const targetUrl = configs.ollamaUrl || 'http://localhost:11434';
     const cleanModel = maestroModel.replace('ollama/', '');
+    logActivity('orchestrator', `[Maestro/Ollama] Calling ${cleanModel} at ${targetUrl}...`);
     const response = await fetchWithTimeout(`${targetUrl}/v1/chat/completions`, {
       method: 'POST',
       headers: {
@@ -647,10 +648,11 @@ FINAL REMINDER: Your output MUST be valid JSON matching one of the formats above
           { role: 'user', content: userPromptText }
         ]
       })
-    });
-    if (!response.ok) throw new Error(`Ollama API Error: ${await response.text()}`);
+    }, 300_000); // 5min timeout for local models
+    if (!response.ok) throw new Error(`Ollama API Error (${response.status}): ${await response.text()}`);
     const data = await response.json();
     rawResponse = data.choices[0].message.content;
+    logActivity('orchestrator', `[Maestro/Ollama] Response received (${(rawResponse || '').length} chars)`);
   }
   // Google Gemini
   else if (maestroModel.includes('gemini')) {
@@ -717,8 +719,16 @@ FINAL REMINDER: Your output MUST be valid JSON matching one of the formats above
   }
 
   const parseOrExtractJSON = (text: string): any | null => {
+    if (!text || !text.trim()) return null;
+    // 1. Try direct JSON parse
     try { return JSON.parse(text); } catch { }
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    // 2. Strip markdown code blocks (common with local Ollama models)
+    const stripped = text.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/i, '').trim();
+    if (stripped !== text) {
+      try { return JSON.parse(stripped); } catch { }
+    }
+    // 3. Extract first JSON object from the text
+    const jsonMatch = stripped.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
       try { return JSON.parse(jsonMatch[0]); } catch { }
     }
@@ -727,9 +737,52 @@ FINAL REMINDER: Your output MUST be valid JSON matching one of the formats above
 
   if (_currentRequestId) emitThinkingEnd(_currentRequestId);
 
-  console.log(`[Maestro] Raw LLM response (first 500 chars): ${rawResponse.slice(0, 500)}`);
+  // ── DEBUG: Log full raw response for debugging ──
+  console.log('[Maestro] Raw LLM response (full):', rawResponse);
+  logActivity('orchestrator', `[Maestro] Raw response (full): ${(rawResponse || '').slice(0, 500)}`);
 
   parsedSpec = parseOrExtractJSON(rawResponse);
+
+  // ── DEBUG: Log parsed spec structure ──
+  if (parsedSpec) {
+    console.log('[Maestro] Parsed spec keys:', Object.keys(parsedSpec));
+    console.log('[Maestro] Parsed spec:', JSON.stringify(parsedSpec, null, 2).slice(0, 1000));
+    logActivity('orchestrator', `[Maestro] Parsed spec keys: [${Object.keys(parsedSpec).join(', ')}]`);
+  } else {
+    console.log('[Maestro] parseOrExtractJSON returned null');
+    logActivity('orchestrator', `[Maestro] parseOrExtractJSON returned null`);
+  }
+
+  // ── Normalize: Some models use "response" or "reply" instead of "goal" or "conversational_reply" ──
+  if (parsedSpec && !parsedSpec.goal && !parsedSpec.conversational_reply) {
+    // Try common alternative keys that local models might use
+    const altReply = parsedSpec.response || parsedSpec.reply || parsedSpec.message || parsedSpec.answer || parsedSpec.text || parsedSpec.content;
+    if (altReply && typeof altReply === 'string') {
+      console.log('[Maestro] No goal/conversational_reply found, but found alternative key. Mapping to conversational_reply.');
+      parsedSpec.conversational_reply = altReply;
+      parsedSpec.goal = altReply;
+    }
+  }
+
+  // Fallback: If no JSON but has content, treat as conversational reply
+  if (!parsedSpec && rawResponse.trim().length > 0) {
+    console.log('[Maestro] Failed to parse JSON from LLM response. Treating raw text as conversational reply.');
+    logActivity('orchestrator', `[Maestro] JSON parse failed. Raw response (first 500 chars): ${rawResponse.trim().slice(0, 500)}`);
+    parsedSpec = {
+      goal: rawResponse.trim(),
+      conversational_reply: rawResponse.trim(),
+      steps: [],
+      thinking: 'Conversational fallback (failed to parse JSON from model response)'
+    };
+  }
+
+  // If still empty after all attempts — show the actual error, not a generic message
+  if (!parsedSpec || (Object.keys(parsedSpec).length === 0)) {
+    const errorMsg = `[Erro] O modelo retornou uma resposta vazia. Raw: "${(rawResponse || '').slice(0, 500)}"`;
+    console.error('[Maestro]', errorMsg);
+    logActivity('orchestrator', errorMsg);
+    parsedSpec = { goal: errorMsg, conversational_reply: errorMsg, steps: [] };
+  }
 
   // If LLM refused (returned text instead of JSON), detect and retry once
   if (!parsedSpec) {
@@ -871,7 +924,7 @@ Original request: ${Array.isArray(userPrompt) ? userPrompt.filter((m: any) => m.
   if (parsedSpec.rename_assistant) {
     const newName = parsedSpec.rename_assistant;
     db.prepare("INSERT OR REPLACE INTO AppSettings (key, value) VALUES ('assistant_name', ?)").run(newName);
-    
+
     // Broadcast setting change
     const { BrowserWindow } = require('electron');
     const wins = BrowserWindow.getAllWindows();
@@ -1485,7 +1538,7 @@ export async function synthesizeTaskResponse(db: any, goal: string, jsonData: an
       userProfilePrompt = `\n--- USER PROFILE CONTEXT ---\n${profile.system_prompt_compiled}\n---------------------------\n`;
     }
   } catch (e) { /* ignore */ }
-  
+
   userProfilePrompt += getLanguagePromptDirective(db);
 
   const systemPrompt = `You are a helpful and conversational AI assistant representing the RedBus Agent.${userProfilePrompt}

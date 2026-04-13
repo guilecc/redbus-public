@@ -86,6 +86,7 @@ export default function App() {
 
   // ID of a meeting to auto-select when navigating to MeetingsView
   const [initialMeetingId, setInitialMeetingId] = useState<string | null>(null);
+  const [ollamaModels, setOllamaModels] = useState<string[]>([]);
 
   const validateKey = async (provider: 'openai' | 'anthropic' | 'google', key: string) => {
     if (!key) return;
@@ -163,6 +164,13 @@ export default function App() {
           if (openAiKey) validateKey('openai', openAiKey);
           if (anthropicKey) validateKey('anthropic', anthropicKey);
           if (googleKey) validateKey('google', googleKey);
+
+          if (ollamaUrl) {
+            const list = await window.redbusAPI.listOllamaModels(ollamaUrl);
+            if (list?.status === 'OK' && list.data) {
+              setOllamaModels(list.data.map((m: any) => m.name));
+            }
+          }
         }
 
         // Load vault secrets list
@@ -308,7 +316,6 @@ export default function App() {
             const conversationalReply = response.data.conversational_reply || spec.conversational_reply;
 
             if (conversationalReply) {
-              // FORMAT F (Screen Memory) or FORMAT G (Accessibility) — show the actual result
               const textId = uuidv4();
               setMessages(prev => [...prev, { id: textId, role: 'assistant', content: conversationalReply }]);
               if (window.redbusAPI) window.redbusAPI.saveMessage({ id: textId, role: 'assistant', content: conversationalReply });
@@ -323,7 +330,7 @@ export default function App() {
                 content: '',
                 type: 'spec',
                 specData: {
-                  goal: spec.goal,
+                  goal: spec.goal || t.chat.taskStarted,
                   status: 'running',
                   steps: stepLabels
                 }
@@ -342,7 +349,7 @@ export default function App() {
                   window.redbusAPI.executeSpec(specId);
                 }
               } else {
-                const scheduledSpecData = { ...(specMsg.specData || { steps: [] }), goal: specMsg.specData?.goal || '', status: 'completed' as const };
+                const scheduledSpecData = { ...(specMsg.specData || { steps: [] }), goal: specMsg.specData?.goal || t.chat.taskScheduled, status: 'completed' as const };
                 setMessages(prev => prev.map(m => m.id === specId ? {
                   ...m,
                   specData: scheduledSpecData,
@@ -357,7 +364,7 @@ export default function App() {
               }
             } else {
               const textId = uuidv4();
-              const textContent = spec.goal || 'entendido.';
+              const textContent = spec.conversational_reply || spec.goal || '[Erro] Resposta vazia do modelo.';
               setMessages(prev => [...prev, { id: textId, role: 'assistant', content: textContent }]);
               if (window.redbusAPI) window.redbusAPI.saveMessage({ id: textId, role: 'assistant', content: textContent });
             }
@@ -662,11 +669,12 @@ export default function App() {
                         {saving ? t.settings.llm.saving : t.settings.llm.save}
                       </button>
                     </header>
-                    
-                    <OllamaSettings 
-                      ollamaUrl={keys.ollamaUrl} 
-                      setOllamaUrl={(url) => setKeys(k => ({ ...k, ollamaUrl: url }))} 
-                      onModelSet={handleChangeModel} 
+
+                    <OllamaSettings
+                      ollamaUrl={keys.ollamaUrl}
+                      setOllamaUrl={(url) => setKeys(k => ({ ...k, ollamaUrl: url }))}
+                      onModelSet={handleChangeModel}
+                      onInstalledChange={setOllamaModels}
                     />
 
                     <section className="settings-section">
@@ -730,9 +738,10 @@ export default function App() {
                               <option value={models.maestroModel} disabled>{models.maestroModel}</option>
                             </optgroup>
                             <optgroup label="Ollama (Local)">
-                              <option value={models.maestroModel.startsWith('ollama/') ? models.maestroModel : ''} disabled={!models.maestroModel.startsWith('ollama/')}>
-                                {models.maestroModel.startsWith('ollama/') ? models.maestroModel.replace('ollama/', '') : 'Nenhum selecionado'}
-                              </option>
+                              {ollamaModels.map(m => (
+                                <option key={m} value={`ollama/${m}`}>{m}</option>
+                              ))}
+                              {ollamaModels.length === 0 && <option value="" disabled>Nenhum modelo baixado</option>}
                             </optgroup>
                           </select>
                         </div>
@@ -752,9 +761,10 @@ export default function App() {
                               <option value={models.workerModel} disabled>{models.workerModel}</option>
                             </optgroup>
                             <optgroup label="Ollama (Local)">
-                              <option value={models.workerModel.startsWith('ollama/') ? models.workerModel : ''} disabled={!models.workerModel.startsWith('ollama/')}>
-                                {models.workerModel.startsWith('ollama/') ? models.workerModel.replace('ollama/', '') : 'Nenhum selecionado'}
-                              </option>
+                              {ollamaModels.map(m => (
+                                <option key={m} value={`ollama/${m}`}>{m}</option>
+                              ))}
+                              {ollamaModels.length === 0 && <option value="" disabled>Nenhum modelo baixado</option>}
                             </optgroup>
                           </select>
                         </div>

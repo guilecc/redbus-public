@@ -200,6 +200,8 @@ const ptBR: Translations = {
   chat: {
     inputPlaceholder: '› execute uma tarefa, faça uma pergunta ou me dê um comando...',
     alreadyLogged: 'já loguei',
+    taskStarted: 'Iniciando tarefa...',
+    taskScheduled: 'Tarefa agendada.',
   },
 
   // ── Activity Console ──

@@ -189,6 +189,8 @@ export interface Translations {
   chat: {
     inputPlaceholder: string;
     alreadyLogged: string;
+    taskStarted: string;
+    taskScheduled: string;
   };
 
   activityConsole: {
@@ -392,6 +394,8 @@ const en: Translations = {
   chat: {
     inputPlaceholder: '› run a task, ask a question, or give me a command...',
     alreadyLogged: 'already logged in',
+    taskStarted: 'Starting task...',
+    taskScheduled: 'Task scheduled.',
   },
 
   activityConsole: {
