@@ -1,6 +1,6 @@
 {
   "name": "redbus",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "RedBus - Assistente de Trabalho Autônomo Local",
   "author": {
     "name": "Guile Cardoso",
@@ -11,9 +11,9 @@
     "dev": "electron-builder install-app-deps && vite",
     "clean": "rm -rf release dist dist-electron",
     "build": "npm run clean && tsc && vite build && electron-builder",
-    "build:mac": "npm run clean && tsc && vite build && electron-builder --mac",
-    "build:win": "npm run clean && tsc && vite build && electron-builder --win",
-    "build:linux": "npm run clean && tsc && vite build && electron-builder --linux",
+    "build:mac": "tsc && vite build && electron-builder --mac",
+    "build:win": "tsc && vite build && electron-builder --win",
+    "build:linux": "tsc && vite build && electron-builder --linux",
     "preview": "vite preview",
     "postinstall": "electron-builder install-app-deps",
     "rebuild:electron": "electron-builder install-app-deps",
