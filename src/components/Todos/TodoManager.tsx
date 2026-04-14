@@ -36,7 +36,8 @@ export const TodoManager: React.FC = () => {
         target_date: newDate ? new Date(newDate).toISOString() : null,
       });
       if (res.status === 'OK' && res.data) {
-        setTodos(prev => [res.data, ...prev]);
+        const newTodo = res.data;
+        setTodos(prev => [newTodo, ...prev]);
         setNewContent('');
         setNewDate('');
       }
