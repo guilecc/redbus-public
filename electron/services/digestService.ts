@@ -53,59 +53,63 @@ export async function generateDigestFromMessages(
 
   let messagesBlock = '';
   if (outlookMsgs.length > 0) {
-    messagesBlock += '=== EMAILS (Outlook) ===\n';
+    messagesBlock += '=== CANAL: outlook (E-mails Outlook) ===\n';
     messagesBlock += outlookMsgs.map((m, i) =>
-      `${i + 1}. De: ${m.sender}${m.subject ? `\n   Assunto: ${m.subject}` : ''}${m.isUnread ? ' [NÃO LIDO]' : ''}\n   ${m.preview}`
+      `ID: OUT-${i + 1}\nRemetente: ${m.sender}${m.subject ? `\nAssunto: ${m.subject}` : ''}${m.isUnread ? ' [NÃO LIDO]' : ''}\nConteúdo: ${m.preview}`
     ).join('\n\n');
   }
   if (teamsMsgs.length > 0) {
-    messagesBlock += '\n\n=== MENSAGENS (Teams) ===\n';
+    messagesBlock += '\n\n=== CANAL: teams (Chat do Microsoft Teams) ===\n';
     messagesBlock += teamsMsgs.map((m, i) =>
-      `${i + 1}. De: ${m.sender}${m.isUnread ? ' [NÃO LIDO]' : ''}\n   ${m.preview}`
+      `ID: TEM-${i + 1}\nRemetente: ${m.sender}${m.isUnread ? ' [NÃO LIDO]' : ''}\nConteúdo: ${m.preview}`
     ).join('\n\n');
   }
   // Include any other channels
   const otherMsgs = messages.filter(m => m.channel !== 'outlook' && m.channel !== 'teams');
   if (otherMsgs.length > 0) {
-    messagesBlock += '\n\n=== OUTRAS MENSAGENS ===\n';
+    messagesBlock += '\n\n=== OUTROS CANAIS ===\n';
     messagesBlock += otherMsgs.map((m, i) =>
-      `${i + 1}. [${m.channel}] De: ${m.sender}\n   ${m.preview}`
+      `ID: OTHER-${i + 1}\nCanal: ${m.channel}\nRemetente: ${m.sender}\nConteúdo: ${m.preview}`
     ).join('\n\n');
   }
 
-  const prompt = `Você é um assistente executivo pessoal. Sua tarefa é analisar os emails e mensagens do dia e produzir um briefing diário claro e acionável.
+  const prompt = `Você é um assistente executivo pessoal. Sua tarefa é analisar emails e mensagens e produzir um briefing diário claro, acionável e com fontes explicitamente citadas.
 
 ${messagesBlock}
 
 ---
 
-Com base nas comunicações acima, produza um briefing executivo em JSON. Siga estas regras:
+Com base nas comunicações acima, produza um briefing executivo em JSON. Siga estas regras CRÍTICAS de citação e formatação:
 
-1. **Resumo executivo**: 2-4 frases descrevendo o panorama do dia. O que está acontecendo? O que precisa de atenção? Escreva como se estivesse falando diretamente com o executivo.
+1. **Citação de Fontes no Texto**: Em todos os campos de texto ("executive_summary" e "summary" de cada tópico), você DEVE citar explicitamente a fonte da informação:
+   - **Para Emails (Outlook)**: Use o formato "Conforme o email com assunto '[Assunto]' enviado por [Sender]...".
+   - **Para Mensagens de Chat (Teams)**: Use o formato "No chat do Teams com [Sender]..." ou "Na conversa do Teams com [Sender]...".
 
-2. **Tópicos**: Agrupe as mensagens por projeto, assunto ou tema de conversa. Cada tópico deve ter:
-   - Um título claro (nome do projeto, assunto, ou tema)
-   - Um resumo explicando o contexto e o que está acontecendo
-   - As mensagens originais que pertencem a esse tópico
-   - Prioridade: "high" (requer decisão/ação urgente), "medium" (importante mas não urgente), "low" (informativo/FYI)
+2. **Resumo executivo**: 2-4 frases descrevendo o panorama do dia. Use as regras de citação acima para referenciar os pontos principais.
 
-3. **Itens de ação**: Liste ações concretas que o executivo precisa tomar, extraídas das mensagens. Seja específico (ex: "Responder ao João sobre o orçamento do projeto X" em vez de "Responder emails").
+3. **Tópicos**: Agrupe as mensagens por projeto ou tema. Cada tópico deve ter:
+   - **title**: Título claro e profissional.
+   - **summary**: Descrição do que está acontecendo, citando as fontes (email/chat) conforme a regra 1.
+   - **messages**: Lista das mensagens originais que compõem este tópico.
+   - **priority**: "high" (urgente), "medium" (importante) ou "low" (informativo).
 
-Retorne APENAS um JSON válido (sem markdown, sem \`\`\`) com esta estrutura exata:
+4. **Itens de ação**: Liste ações concretas e específicas (ex: "Responder email de [Sender] sobre [Assunto]").
+
+Retorne APENAS um JSON válido (sem markdown, sem \`\`\`) com esta estrutura:
 {
-  "executive_summary": "...",
+  "executive_summary": "Sumário com citações...",
   "topics": [
     {
-      "title": "Nome do tópico/projeto",
-      "summary": "O que está acontecendo neste tópico",
-      "messages": [{"sender": "Nome", "subject": "Assunto se houver", "preview": "Conteúdo resumido"}],
+      "title": "Projeto X",
+      "summary": "Resumo detalhado com citações das fontes...",
+      "messages": [{"sender": "Nome", "subject": "Assunto", "preview": "Conteúdo"}],
       "priority": "high|medium|low"
     }
   ],
-  "action_items": ["Ação concreta 1", "Ação concreta 2"]
+  "action_items": ["Ação 1", "Ação 2"]
 }
 
-Responda em português. Ordene os tópicos por prioridade (high primeiro).`;
+Responda em português. Priorize precisão e clareza nas citações.`;
 
   try {
     const response = await callLLM(prompt);
@@ -136,10 +140,13 @@ Responda em português. Ordene os tópicos por prioridade (high primeiro).`;
       executive_summary: `Foram encontradas ${messages.length} comunicações de ${channels.join(' e ')}. Não foi possível gerar o resumo com IA — abaixo estão agrupadas por remetente.`,
       topics: Array.from(bySender.entries()).map(([sender, msgs]) => ({
         title: sender,
-        summary: msgs.map(m => m.subject || m.preview).join('; '),
-        messages: msgs.map(m => ({ sender: m.sender, subject: m.subject, preview: m.preview })),
-        priority: 'medium' as const,
-      })),
+      summary: msgs.map(m => {
+        const prefix = m.channel === 'outlook' ? `[Email: ${m.subject}]` : `[Teams: ${m.sender}]`;
+        return `${prefix} ${m.preview}`;
+      }).join('; '),
+      messages: msgs.map(m => ({ sender: m.sender, subject: m.subject, preview: m.preview })),
+      priority: 'medium' as const,
+    })),
       action_items: [],
       total_messages: messages.length,
       channels,
