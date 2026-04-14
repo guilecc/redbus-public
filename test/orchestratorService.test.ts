@@ -336,4 +336,102 @@ describe('Orchestrator Service - Maestro', () => {
     }
   }, 30000);
 
+  // ══════════════════════════════════════════════════════════
+  // TESTE: FORMAT M batch — create_todos (múltiplos to-dos)
+  // ══════════════════════════════════════════════════════════
+
+  it('8. FORMAT M batch: create_todos deve criar um to-do por item e persistir reply no DB', async () => {
+    const { initializeDatabase } = await import('../electron/database');
+    const { getMessages } = await import('../electron/services/archiveService');
+    const db = initializeDatabase(':memory:');
+
+    try {
+      db.prepare(`UPDATE ProviderConfigs SET anthropicKey = 'ant-test', maestroModel = 'claude-3-7-sonnet-20250219' WHERE id = 1`).run();
+      db.prepare(`INSERT OR REPLACE INTO UserProfile (id, name, role, preferences, system_prompt_compiled) VALUES ('default', 'Test', 'Dev', '', 'Be helpful.')`).run();
+
+      // LLM returns create_todos (batch)
+      const fakeSpec = {
+        thinking: '1. UNDERSTAND: User wants 3 separate to-dos. 2. DECISION: FORMAT M with create_todos array.',
+        goal: 'Criar 3 to-dos',
+        create_todos: [
+          { content: 'Acertar alocação do Woody', target_date: null },
+          { content: 'Aumento do Guilherme Diniz Peres', target_date: null },
+          { content: 'Fechar custo Embraer - Gestão de Picking', target_date: null },
+        ],
+        steps: [],
+      };
+
+      (global.fetch as any).mockResolvedValue({
+        ok: true,
+        json: async () => ({ content: [{ text: JSON.stringify(fakeSpec) }] }),
+      });
+
+      const result = await createSpecFromPrompt(db, 'Crie os seguintes to-dos: Acertar alocação do Woody / Aumento do Guilherme / Fechar custo Embraer');
+
+      // Must return conversational_reply listing all 3 items
+      expect(result.conversational_reply).toContain('3 To-Dos criados');
+      expect(result.conversational_reply).toContain('Acertar alocação do Woody');
+      expect(result.conversational_reply).toContain('Aumento do Guilherme Diniz Peres');
+      expect(result.conversational_reply).toContain('Fechar custo Embraer');
+
+      // Must return replyId (backend persisted the message)
+      expect(result.replyId).toBeDefined();
+      expect(typeof result.replyId).toBe('string');
+
+      // The reply must be in ChatMessages (backend-persisted for context)
+      const msgs = getMessages(db, 20, 0);
+      const assistantReply = msgs.find((m: any) => m.id === result.replyId);
+      expect(assistantReply).toBeDefined();
+      expect(assistantReply!.role).toBe('assistant');
+      expect(assistantReply!.content).toContain('3 To-Dos criados');
+
+      // All 3 to-dos must be in the Todos table
+      const todos = db.prepare('SELECT * FROM Todos ORDER BY created_at ASC').all() as any[];
+      expect(todos).toHaveLength(3);
+      expect(todos[0].content).toBe('Acertar alocação do Woody');
+      expect(todos[1].content).toBe('Aumento do Guilherme Diniz Peres');
+      expect(todos[2].content).toBe('Fechar custo Embraer - Gestão de Picking');
+      todos.forEach((t: any) => {
+        expect(t.status).toBe('pending');
+        expect(t.archived).toBe(0);
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  it('9. FORMAT M singular (backward compat): create_todo ainda deve funcionar', async () => {
+    const { initializeDatabase } = await import('../electron/database');
+    const db = initializeDatabase(':memory:');
+
+    try {
+      db.prepare(`UPDATE ProviderConfigs SET anthropicKey = 'ant-test', maestroModel = 'claude-3-7-sonnet-20250219' WHERE id = 1`).run();
+      db.prepare(`INSERT OR REPLACE INTO UserProfile (id, name, role, preferences, system_prompt_compiled) VALUES ('default', 'Test', 'Dev', '', 'Be helpful.')`).run();
+
+      // LLM uses deprecated singular form (backward compat)
+      const fakeSpec = {
+        thinking: 'User wants one to-do.',
+        goal: 'Criar to-do',
+        create_todo: { content: 'Revisar relatório mensal', target_date: null },
+        steps: [],
+      };
+
+      (global.fetch as any).mockResolvedValue({
+        ok: true,
+        json: async () => ({ content: [{ text: JSON.stringify(fakeSpec) }] }),
+      });
+
+      const result = await createSpecFromPrompt(db, 'Me lembra de revisar o relatório mensal');
+
+      expect(result.conversational_reply).toContain('Revisar relatório mensal');
+      expect(result.replyId).toBeDefined();
+
+      const todos = db.prepare('SELECT * FROM Todos').all() as any[];
+      expect(todos).toHaveLength(1);
+      expect(todos[0].content).toBe('Revisar relatório mensal');
+    } finally {
+      db.close();
+    }
+  });
+
 });

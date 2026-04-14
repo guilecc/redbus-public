@@ -25,6 +25,82 @@ export async function fetchWithTimeout(
   }
 }
 
+/**
+ * Call Ollama chat endpoint with automatic fallback.
+ * Tries /v1/chat/completions (OpenAI-compatible) first.
+ * Falls back to native /api/chat if 405/404.
+ */
+export async function callOllamaChat(
+  baseUrl: string,
+  model: string,
+  messages: Array<{ role: string; content: string }>,
+  options: {
+    headers?: Record<string, string>;
+    response_format?: { type: string };
+    tools?: any[];
+    timeoutMs?: number;
+    numPredict?: number;  // Ollama num_predict (max output tokens). Defaults to model default (~2048).
+  } = {}
+): Promise<{ choices: Array<{ message: { role: string; content: string; tool_calls?: any[] } }> }> {
+  const url = baseUrl.replace(/\/+$/, '');
+  const timeoutMs = options.timeoutMs || 300_000;
+  const headers: Record<string, string> = { 'Content-Type': 'application/json', ...(options.headers || {}) };
+
+  const body: any = { model, messages };
+  if (options.response_format) body.response_format = options.response_format;
+  if (options.tools) body.tools = options.tools;
+  // Pass max output token budget. The OpenAI-compat endpoint uses max_tokens;
+  // the native /api/chat endpoint uses options.num_predict (set below).
+  if (options.numPredict) body.max_tokens = options.numPredict;
+
+  // 1. Try OpenAI-compatible endpoint
+  const openaiRes = await fetchWithTimeout(`${url}/v1/chat/completions`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(body),
+  }, timeoutMs);
+
+  if (openaiRes.ok) {
+    return openaiRes.json();
+  }
+
+  // Only fallback on 404/405 (endpoint not available)
+  if (openaiRes.status !== 404 && openaiRes.status !== 405) {
+    const errText = await openaiRes.text();
+    throw new Error(`Ollama API Error (${openaiRes.status}): ${errText}`);
+  }
+
+  // 2. Fallback to native /api/chat
+  console.log(`[Ollama] /v1/chat/completions returned ${openaiRes.status}, falling back to /api/chat`);
+  const nativeBody: any = { model, messages, stream: false };
+  if (options.response_format) nativeBody.format = 'json';
+  if (options.tools) nativeBody.tools = options.tools;
+  if (options.numPredict) nativeBody.options = { num_predict: options.numPredict };
+
+  const nativeRes = await fetchWithTimeout(`${url}/api/chat`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(nativeBody),
+  }, timeoutMs);
+
+  if (!nativeRes.ok) {
+    const errText = await nativeRes.text();
+    throw new Error(`Ollama native API Error (${nativeRes.status}): ${errText}`);
+  }
+
+  // Convert native response to OpenAI-compatible format
+  const nativeData = await nativeRes.json();
+  return {
+    choices: [{
+      message: {
+        role: nativeData.message?.role || 'assistant',
+        content: nativeData.message?.content || '',
+        tool_calls: nativeData.message?.tool_calls,
+      }
+    }]
+  };
+}
+
 export async function extractDataFromDOM(db: any, domText: string, instruction: string): Promise<string> {
   const configs = db.prepare('SELECT * FROM ProviderConfigs WHERE id = 1').get();
   if (!configs) throw new Error('Provider configs not found');
@@ -62,51 +138,17 @@ CRITICAL RULES:
 
   const userPrompt = `Instruction: ${instruction}\n\nDOM Content:\n${trimmedDom.substring(0, 40000)}`;
 
-  // Ollama
-  if (workerModel.startsWith('ollama/')) {
-    const targetUrl = configs.ollamaUrl || 'http://localhost:11434';
-    const cleanModel = workerModel.replace('ollama/', '');
-    const response = await fetchWithTimeout(`${targetUrl}/v1/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        model: cleanModel,
-        response_format: { type: 'json_object' },
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt }
-        ]
-      })
-    }, 300_000); // 5min timeout for local models
-    if (!response.ok) throw new Error(`Ollama API Error (${response.status}): ${await response.text()}`);
-    const data = await response.json();
-    return data.choices[0].message.content;
-  }
-  
-  // Ollama Cloud
-  if (workerModel.startsWith('ollama-cloud/')) {
-    if (!configs.ollamaCloudKey) throw new Error('Ollama Cloud API Key is missing for worker');
-    const targetUrl = configs.ollamaCloudUrl || 'https://ollama.com';
-    const cleanModel = workerModel.replace('ollama-cloud/', '');
-    const response = await fetchWithTimeout(`${targetUrl}/v1/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${configs.ollamaCloudKey}`
-      },
-      body: JSON.stringify({
-        model: cleanModel,
-        response_format: { type: 'json_object' },
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt }
-        ]
-      })
-    });
-    if (!response.ok) throw new Error(`Ollama Cloud API Error (${response.status}): ${await response.text()}`);
-    const data = await response.json();
+  // Ollama (local or cloud)
+  if (workerModel.startsWith('ollama/') || workerModel.startsWith('ollama-cloud/')) {
+    const isCloud = workerModel.startsWith('ollama-cloud/');
+    if (isCloud && !configs.ollamaCloudKey) throw new Error('Ollama Cloud API Key is missing for worker');
+    const targetUrl = isCloud ? (configs.ollamaCloudUrl || 'https://ollama.com') : (configs.ollamaUrl || 'http://localhost:11434');
+    const cleanModel = workerModel.replace('ollama/', '').replace('ollama-cloud/', '');
+    const authHeaders = isCloud && configs.ollamaCloudKey ? { 'Authorization': `Bearer ${configs.ollamaCloudKey}` } : undefined;
+    const data = await callOllamaChat(targetUrl, cleanModel, [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt }
+    ], { headers: authHeaders, response_format: { type: 'json_object' } });
     return data.choices[0].message.content;
   }
 
@@ -197,35 +239,17 @@ export async function callWorkerRaw(db: any, systemPrompt: string, userPrompt: s
   const workerModel = configs.workerModel || 'gemini-2.5-flash';
   logActivity('orchestrator', `[Worker/Raw] Executando análise com ${workerModel}`);
 
-  // Ollama
-  if (workerModel.startsWith('ollama/')) {
-    const targetUrl = configs.ollamaUrl || 'http://localhost:11434';
-    const cleanModel = workerModel.replace('ollama/', '');
-    const response = await fetchWithTimeout(`${targetUrl}/v1/chat/completions`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: cleanModel, messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }] })
-    }, 300_000); // 5min timeout for local models
-    if (!response.ok) throw new Error(`Ollama API Error (${response.status}): ${await response.text()}`);
-    const data = await response.json();
-    return data.choices[0].message.content;
-  }
-
-  // Ollama Cloud
-  if (workerModel.startsWith('ollama-cloud/')) {
-    if (!configs.ollamaCloudKey) throw new Error('Ollama Cloud API Key is missing');
-    const targetUrl = configs.ollamaCloudUrl || 'https://ollama.com';
-    const cleanModel = workerModel.replace('ollama-cloud/', '');
-    const response = await fetchWithTimeout(`${targetUrl}/v1/chat/completions`, {
-      method: 'POST',
-      headers: { 
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${configs.ollamaCloudKey}` 
-      },
-      body: JSON.stringify({ model: cleanModel, messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }] })
-    });
-    if (!response.ok) throw new Error(`Ollama Cloud API Error (${response.status}): ${await response.text()}`);
-    const data = await response.json();
+  // Ollama (local or cloud)
+  if (workerModel.startsWith('ollama/') || workerModel.startsWith('ollama-cloud/')) {
+    const isCloud = workerModel.startsWith('ollama-cloud/');
+    if (isCloud && !configs.ollamaCloudKey) throw new Error('Ollama Cloud API Key is missing');
+    const targetUrl = isCloud ? (configs.ollamaCloudUrl || 'https://ollama.com') : (configs.ollamaUrl || 'http://localhost:11434');
+    const cleanModel = workerModel.replace('ollama/', '').replace('ollama-cloud/', '');
+    const authHeaders = isCloud && configs.ollamaCloudKey ? { 'Authorization': `Bearer ${configs.ollamaCloudKey}` } : undefined;
+    const data = await callOllamaChat(targetUrl, cleanModel, [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt }
+    ], { headers: authHeaders });
     return data.choices[0].message.content;
   }
 
@@ -475,10 +499,13 @@ STRATEGY:
 5. NEVER invent data. Only extract what is in the snapshot.
 6. Be efficient — every action returns a snapshot, so you always know the current state.`;
 
-  // Ollama (native OpenAI-compatible tool calling only — requires Ollama 0.3.0+ with a model that supports tools)
-  if (workerModel.startsWith('ollama/')) {
-    const targetUrl = configs.ollamaUrl || 'http://localhost:11434';
-    const cleanModel = workerModel.replace('ollama/', '');
+  // Ollama (local or cloud) — native tool calling (Ollama 0.3.0+ with a model that supports tools)
+  if (workerModel.startsWith('ollama/') || workerModel.startsWith('ollama-cloud/')) {
+    const isCloud = workerModel.startsWith('ollama-cloud/');
+    if (isCloud && !configs.ollamaCloudKey) throw new Error('Ollama Cloud API Key is missing');
+    const targetUrl = isCloud ? (configs.ollamaCloudUrl || 'https://ollama.com') : (configs.ollamaUrl || 'http://localhost:11434');
+    const cleanModel = workerModel.replace('ollama/', '').replace('ollama-cloud/', '');
+    const authHeaders = isCloud && configs.ollamaCloudKey ? { 'Authorization': `Bearer ${configs.ollamaCloudKey}` } : undefined;
 
     const openAiTools = WORKER_TOOLS.map(t => ({
       type: 'function',
@@ -491,68 +518,11 @@ STRATEGY:
 
     logActivity('orchestrator', `[Worker/Ollama] Calling ${cleanModel} with native tool calling...`);
 
-    const response = await fetchWithTimeout(`${targetUrl}/v1/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        model: cleanModel,
-        messages: [{ role: 'system', content: systemMessage }, ...messages],
-        tools: openAiTools
-      })
-    }, 300_000); // 5min timeout for local models
+    const data = await callOllamaChat(targetUrl, cleanModel, [
+      { role: 'system', content: systemMessage },
+      ...messages
+    ], { headers: authHeaders, tools: openAiTools });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Ollama API Error (${response.status}): ${errorText}`);
-    }
-
-    const data = await response.json();
-    const message = data.choices[0].message;
-
-    if (message.tool_calls) {
-      return {
-        tool_calls: message.tool_calls.map((tc: any) => ({
-          id: tc.id,
-          name: tc.function.name,
-          args: typeof tc.function.arguments === 'string' ? JSON.parse(tc.function.arguments) : tc.function.arguments
-        }))
-      };
-    }
-    return { content: message.content };
-  }
-
-  // Ollama Cloud (Tool Calling)
-  if (workerModel.startsWith('ollama-cloud/')) {
-    if (!configs.ollamaCloudKey) throw new Error('Ollama Cloud API Key is missing');
-    const targetUrl = configs.ollamaCloudUrl || 'https://ollama.com';
-    const cleanModel = workerModel.replace('ollama-cloud/', '');
-
-    const openAiTools = WORKER_TOOLS.map(t => ({
-      type: 'function',
-      function: {
-        name: t.name,
-        description: t.description,
-        parameters: t.input_schema
-      }
-    }));
-
-    const response = await fetchWithTimeout(`${targetUrl}/v1/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${configs.ollamaCloudKey}`
-      },
-      body: JSON.stringify({
-        model: cleanModel,
-        messages: [{ role: 'system', content: systemMessage }, ...messages],
-        tools: openAiTools
-      })
-    });
-
-    if (!response.ok) throw new Error(`Ollama Cloud API Error (${response.status}): ${await response.text()}`);
-    const data = await response.json();
     const message = data.choices[0].message;
 
     if (message.tool_calls) {

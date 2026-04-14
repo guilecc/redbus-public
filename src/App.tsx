@@ -329,9 +329,16 @@ export default function App() {
             const conversationalReply = response.data.conversational_reply || spec.conversational_reply;
 
             if (conversationalReply) {
-              const textId = uuidv4();
+              // Use replyId from backend if already persisted (e.g. FORMAT M batch todos).
+              // This avoids creating a duplicate ChatMessages row and ensures the next
+              // turn has the correct context immediately.
+              const backendReplyId: string | undefined = response.data.replyId;
+              const textId = backendReplyId || uuidv4();
               setMessages(prev => [...prev, { id: textId, role: 'assistant', content: conversationalReply }]);
-              if (window.redbusAPI) window.redbusAPI.saveMessage({ id: textId, role: 'assistant', content: conversationalReply });
+              // Only persist if the backend did NOT already save it
+              if (!backendReplyId && window.redbusAPI) {
+                window.redbusAPI.saveMessage({ id: textId, role: 'assistant', content: conversationalReply });
+              }
             } else if (isPython || (spec.steps && spec.steps.length > 0)) {
               const stepLabels = isPython
                 ? [{ label: skillName ? `skill → ${skillName}` : 'python → exec', status: 'pending' as const }]

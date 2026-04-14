@@ -11,7 +11,7 @@
 
 import { v4 as uuidv4 } from 'uuid';
 import { extractAll, getCachedMessages, injectDraftReply } from './channelManager';
-import { fetchWithTimeout } from './llmService';
+import { fetchWithTimeout, callOllamaChat } from './llmService';
 import { sendOSNotification } from './notificationService';
 import { saveMessage } from './archiveService';
 import { logActivity } from './activityLogger';
@@ -122,6 +122,18 @@ async function callWorkerLLM(systemPrompt: string, userPrompt: string): Promise<
     }, 30_000);
     if (!res.ok) throw new Error(`OpenAI error: ${res.status}`);
     const d = await res.json();
+    return d.choices?.[0]?.message?.content || '';
+  }
+
+  if (model.startsWith('ollama/') || model.startsWith('ollama-cloud/')) {
+    const isCloud = model.startsWith('ollama-cloud/');
+    const targetUrl = isCloud ? (configs.ollamaCloudUrl || 'https://ollama.com') : (configs.ollamaUrl || 'http://localhost:11434');
+    const cleanModel = model.replace('ollama/', '').replace('ollama-cloud/', '');
+    const authHeaders = isCloud && configs.ollamaCloudKey ? { 'Authorization': `Bearer ${configs.ollamaCloudKey}` } : undefined;
+    const d = await callOllamaChat(targetUrl, cleanModel, [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt }
+    ], { headers: authHeaders, response_format: { type: 'json_object' } });
     return d.choices?.[0]?.message?.content || '';
   }
 

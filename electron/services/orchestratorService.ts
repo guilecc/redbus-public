@@ -7,7 +7,7 @@ import { getActiveFacts, touchFacts, estimateTokens, saveFactFromForge } from '.
 import { searchMemory } from './memorySearchService';
 import { getEnvironmentalContext } from './sensorManager';
 import { searchScreenMemory } from './screenMemoryService';
-import { fetchWithTimeout } from './llmService';
+import { fetchWithTimeout, callOllamaChat } from './llmService';
 import { searchMeetingMemory } from './meetingService';
 import { searchDigestMemory } from './digestService';
 import { logActivity } from './activityLogger';
@@ -421,6 +421,8 @@ Your thinking process MUST follow this structure:
 5. SELF-CRITIQUE: Does my chosen approach make sense? Am I missing something? Is the user's intent ambiguous?
 6. ANTI-PATTERN CHECK: Am I about to create a skill for something that FORMAT H, J, or K already handles natively? If yes, switch to the native FORMAT.
 
+⚠️ THINKING BREVITY RULE: Keep the "thinking" field SHORT — maximum 3-4 sentences total. Do NOT write paragraphs. Summarize each step in ONE sentence. The thinking field is internal and must NOT consume your entire output budget. The actual JSON fields (goal, conversational_reply, steps, etc.) are what matter.
+
 UNCERTAINTY RULE: If the request is ambiguous or you lack critical information, use FORMAT C to ask a clarifying question INSTEAD of guessing. A wrong action is worse than a question.
 
 DECOMPOSITION RULE: If the task has multiple distinct steps that require different FORMATs, handle the FIRST step now and explain the plan for remaining steps in your response.
@@ -431,7 +433,8 @@ DECISION RULES (evaluate in this order):
 - If the user asks about BOTH meetings AND emails/digests (e.g. "what happened this week?", "summarize my week", "o que está rolando sobre X?") → FORMAT K (parallel_tools) firing FORMAT H + FORMAT J simultaneously.
 - If the user asks to LOG IN, CONNECT, or AUTHENTICATE to Outlook 365 or Microsoft Teams → FORMAT I (inbox channel connect).
 - If the user asks you to change your name or set your name to something → FORMAT L (Rename Assistant).
-- If the user asks to remember something, create a task, add a to-do, or "me lembre de..." → FORMAT M (create_todo). Infer target_date from context.
+- If the user asks to create ONE to-do, task, or "me lembre de..." → FORMAT M with \`create_todos\` as an ARRAY with a single item.
+- If the user lists MULTIPLE tasks/to-dos in one message (bullet points, numbers, line breaks, commas, or dashes) → FORMAT M with \`create_todos\` as an ARRAY with ONE entry per task. NEVER merge multiple tasks into a single content string. Every distinct item must be its own object in the array.
 - If the user says they completed a task, finished something, or asks to check off a to-do → FORMAT N (check_todo).
 - If the user asks to read/analyze a native desktop app's screen → FORMAT G (accessibility tree read)
 - If the user asks about something they saw on screen recently → FORMAT F (screen memory search)
@@ -467,10 +470,12 @@ FORMAT B — Python Execution (one-off, MUST follow I/O Standard):
 FORMAT C — Conversational (no action needed):
 {
   "thinking": "step-by-step reasoning...",
-  "goal": "your natural language response",
+  "goal": "brief summary of intent (e.g. 'greeting', 'answering question about X')",
+  "conversational_reply": "the FULL natural language response the user will see — write it here, in the user's language, with the personality and tone from your system prompt",
   "cron_expression": null,
   "steps": []
 }
+IMPORTANT: In FORMAT C, the "conversational_reply" field is what the user actually sees. The "goal" field is just a short internal label. NEVER put the user-facing reply in "goal" — always use "conversational_reply".
 
 FORMAT D — Execute Existing Skill:
 {
@@ -587,17 +592,19 @@ FORMAT L — Rename Assistant:
 }
 Use this when the user asks you to change your name. The new name will be saved and displayed in the UI.
 
-FORMAT M — Create To-Do:
+FORMAT M — Create To-Do(s) [ALWAYS use create_todos array]:
 {
   "thinking": "step-by-step reasoning...",
   "goal": "string",
-  "create_todo": {
-    "content": "string (task description)",
-    "target_date": "ISO 8601 datetime string or null"
-  },
+  "create_todos": [
+    { "content": "string (task description)", "target_date": "ISO 8601 datetime string or null" }
+  ],
   "steps": []
 }
-Use this when the user asks you to remind them of something, create a task, add a to-do, or any intent that implies a future action item. Infer target_date from natural language (e.g. "amanhã" → tomorrow's date, "sexta" → next Friday). If no date is mentioned, set target_date to null.
+CRITICAL RULE: Always use \`create_todos\` (plural, array). NEVER use the deprecated \`create_todo\` (singular object).
+When the user lists multiple tasks (separated by bullets •, dashes -, numbers, line breaks \n, or commas), create a SEPARATE object in the array for EACH task. Do NOT concatenate them.
+Example: "Crie: Ligar pro João / Comprar pão / Reunião amanhã" → create_todos with 3 items.
+Infer target_date from natural language. If no date, set target_date to null.
 
 FORMAT N — Complete To-Do:
 {
@@ -655,55 +662,34 @@ FINAL REMINDER: Your output MUST be valid JSON matching one of the formats above
   // Emit thinking events for the Maestro LLM call
   if (_currentRequestId) emitThinkingStart(_currentRequestId);
 
-  // Ollama
-  if (maestroModel.startsWith('ollama/')) {
-    const targetUrl = configs.ollamaUrl || 'http://localhost:11434';
-    const cleanModel = maestroModel.replace('ollama/', '');
-    logActivity('orchestrator', `[Maestro/Ollama] Calling ${cleanModel} at ${targetUrl}...`);
-    const response = await fetchWithTimeout(`${targetUrl}/v1/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        model: cleanModel,
-        response_format: { type: 'json_object' },
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPromptText }
-        ]
-      })
-    }, 300_000); // 5min timeout for local models
-    if (!response.ok) throw new Error(`Ollama API Error (${response.status}): ${await response.text()}`);
-    const data = await response.json();
+  // Ollama (local or cloud)
+  if (maestroModel.startsWith('ollama/') || maestroModel.startsWith('ollama-cloud/')) {
+    const isCloud = maestroModel.startsWith('ollama-cloud/');
+    if (isCloud && !configs.ollamaCloudKey) throw new Error('Ollama Cloud API Key is missing for maestro');
+    const targetUrl = isCloud ? (configs.ollamaCloudUrl || 'https://ollama.com') : (configs.ollamaUrl || 'http://localhost:11434');
+    const cleanModel = maestroModel.replace('ollama/', '').replace('ollama-cloud/', '');
+    const authHeaders = isCloud && configs.ollamaCloudKey ? { 'Authorization': `Bearer ${configs.ollamaCloudKey}` } : undefined;
+    const label = isCloud ? 'OllamaCloud' : 'Ollama';
+    logActivity('orchestrator', `[Maestro/${label}] Calling ${cleanModel} at ${targetUrl}...`);
+
+    // ⚠️ LOCAL MODEL OVERRIDE:
+    // Ollama models have limited context and cannot safely embed a long reasoning string
+    // inside JSON without corrupting it (unescaped quotes, truncation mid-value).
+    // We append a hard override that completely removes the "thinking" field requirement.
+    const ollamaSystemPrompt = systemPrompt + `
+
+⚠️ CRITICAL OVERRIDE FOR LOCAL MODELS:
+You are running as a local Ollama model. DO NOT include a "thinking" field in your JSON response.
+Omit it completely. Output ONLY the required fields for your chosen FORMAT (goal, conversational_reply, steps, etc.).
+Never put reasoning, explanations, or quotes from the conversation inside a JSON string value.
+Your output MUST be compact, valid JSON. Any "thinking" output is a critical failure.`;
+
+    const data = await callOllamaChat(targetUrl, cleanModel, [
+      { role: 'system', content: ollamaSystemPrompt },
+      { role: 'user', content: userPromptText }
+    ], { headers: authHeaders, response_format: { type: 'json_object' }, numPredict: 8192 });
     rawResponse = data.choices[0].message.content;
-    logActivity('orchestrator', `[Maestro/Ollama] Response received (${(rawResponse || '').length} chars)`);
-  }
-  // Ollama Cloud
-  else if (maestroModel.startsWith('ollama-cloud/')) {
-    if (!configs.ollamaCloudKey) throw new Error('Ollama Cloud API Key is missing for maestro');
-    const targetUrl = configs.ollamaCloudUrl || 'https://ollama.com';
-    const cleanModel = maestroModel.replace('ollama-cloud/', '');
-    logActivity('orchestrator', `[Maestro/OllamaCloud] Calling ${cleanModel} at ${targetUrl}...`);
-    const response = await fetchWithTimeout(`${targetUrl}/v1/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${configs.ollamaCloudKey}`
-      },
-      body: JSON.stringify({
-        model: cleanModel,
-        response_format: { type: 'json_object' },
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPromptText }
-        ]
-      })
-    }, 120_000);
-    if (!response.ok) throw new Error(`Ollama Cloud API Error (${response.status}): ${await response.text()}`);
-    const data = await response.json();
-    rawResponse = data.choices[0].message.content;
-    logActivity('orchestrator', `[Maestro/OllamaCloud] Response received (${(rawResponse || '').length} chars)`);
+    logActivity('orchestrator', `[Maestro/${label}] Response received (${(rawResponse || '').length} chars)`);
   }
   // Google Gemini
   else if (maestroModel.includes('gemini')) {
@@ -741,7 +727,19 @@ FINAL REMINDER: Your output MUST be valid JSON matching one of the formats above
     });
     if (!response.ok) throw new Error(`Anthropic API Error: ${await response.text()}`);
     const data = await response.json();
-    rawResponse = data.content[0].text.trim();
+    // Extended thinking models (e.g. claude-sonnet-4-6 with thinking) return multiple
+    // content blocks: { type: "thinking", thinking: "..." } and { type: "text", text: "..." }.
+    // We must find the "text" block — grabbing content[0] blindly breaks for thinking models.
+    const textBlock = Array.isArray(data.content)
+      ? data.content.find((b: any) => b.type === 'text')
+      : null;
+    const thinkingBlock = Array.isArray(data.content)
+      ? data.content.find((b: any) => b.type === 'thinking')
+      : null;
+    if (thinkingBlock?.thinking) {
+      console.log('[Maestro/Claude] Extended thinking content (first 300 chars):', thinkingBlock.thinking.slice(0, 300));
+    }
+    rawResponse = (textBlock?.text || data.content[0]?.text || '').trim();
     rawResponse = rawResponse.replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/i, '').trim();
   }
   // OpenAI GPT
@@ -771,18 +769,77 @@ FINAL REMINDER: Your output MUST be valid JSON matching one of the formats above
 
   const parseOrExtractJSON = (text: string): any | null => {
     if (!text || !text.trim()) return null;
-    // 1. Try direct JSON parse
+
+    // 1. Direct parse (happy path)
     try { return JSON.parse(text); } catch { }
-    // 2. Strip markdown code blocks (common with local Ollama models)
+
+    // 2. Strip markdown code fences (```json ... ```)
     const stripped = text.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/i, '').trim();
     if (stripped !== text) {
       try { return JSON.parse(stripped); } catch { }
     }
-    // 3. Extract first JSON object from the text
-    const jsonMatch = stripped.match(/\{[\s\S]*\}/);
+
+    // 3. Balanced-brace extractor — finds the first structurally complete {...} object.
+    //    This handles cases where the model appends extra text AFTER a valid JSON object.
+    const findBalancedJSON = (src: string): string | null => {
+      const start = src.indexOf('{');
+      if (start === -1) return null;
+      let depth = 0;
+      let inString = false;
+      let escape = false;
+      for (let i = start; i < src.length; i++) {
+        const ch = src[i];
+        if (escape) { escape = false; continue; }
+        if (ch === '\\' && inString) { escape = true; continue; }
+        if (ch === '"') { inString = !inString; continue; }
+        if (inString) continue;
+        if (ch === '{') depth++;
+        else if (ch === '}') {
+          depth--;
+          if (depth === 0) return src.slice(start, i + 1);
+        }
+      }
+      return null;
+    };
+
+    const balanced = findBalancedJSON(stripped);
+    if (balanced) {
+      try { return JSON.parse(balanced); } catch { }
+    }
+
+    // 4. Thinking-field sanitizer — local models (gemma4, etc.) frequently emit unescaped
+    //    double-quotes inside the "thinking" string, corrupting the JSON.
+    //    Strategy: find "thinking": and strip everything between its opening quote and the
+    //    next top-level field (or end of object), then try to parse the cleaned JSON.
+    const sanitizeThinking = (src: string): string | null => {
+      // Replace the thinking value with an empty string and retry
+      const cleaned = src.replace(/"thinking"\s*:\s*"(?:[^"\\]|\\.)*"/s, '"thinking": "[redacted]"');
+      if (cleaned !== src) return cleaned;
+      // Fallback: aggressively truncate the thinking value at first unescaped " after opening
+      const match = src.match(/^(\s*\{\s*"thinking"\s*:\s*")/s);
+      if (match) {
+        // Remove entire thinking field value up to the next top-level key or closing brace
+        return src.replace(/"thinking"\s*:\s*"[\s\S]*?",\s*(?="[a-z])/i, '"thinking": "[redacted]",\n  ');
+      }
+      return null;
+    };
+
+    const sanitized = sanitizeThinking(stripped || text);
+    if (sanitized) {
+      try { return JSON.parse(sanitized); } catch { }
+      // Also try balanced extraction on the sanitized string
+      const balancedSanitized = findBalancedJSON(sanitized);
+      if (balancedSanitized) {
+        try { return JSON.parse(balancedSanitized); } catch { }
+      }
+    }
+
+    // 5. Greedy regex fallback (last resort)
+    const jsonMatch = (stripped || text).match(/\{[\s\S]*\}/);
     if (jsonMatch) {
       try { return JSON.parse(jsonMatch[0]); } catch { }
     }
+
     return null;
   };
 
@@ -853,16 +910,16 @@ Original request: ${Array.isArray(userPrompt) ? userPrompt.filter((m: any) => m.
           if (res.ok) { const d = await res.json(); retryResponse = d.candidates?.[0]?.content?.parts?.[0]?.text || ''; }
         } else if (maestroModel.includes('claude') && configs.anthropicKey) {
           const res = await fetchWithTimeout('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-api-key': configs.anthropicKey, 'anthropic-version': '2023-06-01' }, body: JSON.stringify({ model: maestroModel, max_tokens: 4096, temperature: 0.2, messages: [{ role: 'user', content: overridePrompt }] }) });
-          if (res.ok) { const d = await res.json(); retryResponse = d.content?.[0]?.text || ''; }
-        } else if (maestroModel.startsWith('ollama-cloud/')) {
-          const targetUrl = configs.ollamaCloudUrl || 'https://ollama.com';
-          const cleanModel = maestroModel.replace('ollama-cloud/', '');
-          const res = await fetchWithTimeout(`${targetUrl}/v1/chat/completions`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${configs.ollamaCloudKey}` },
-            body: JSON.stringify({ model: cleanModel, temperature: 0.2, messages: [{ role: 'user', content: overridePrompt }] })
-          });
-          if (res.ok) { const d = await res.json(); retryResponse = d.choices?.[0]?.message?.content || ''; }
+          if (res.ok) { const d = await res.json(); const tb = Array.isArray(d.content) ? d.content.find((b: any) => b.type === 'text') : null; retryResponse = tb?.text || d.content?.[0]?.text || ''; }
+        } else if (maestroModel.startsWith('ollama/') || maestroModel.startsWith('ollama-cloud/')) {
+          const isCloud = maestroModel.startsWith('ollama-cloud/');
+          const targetUrl = isCloud ? (configs.ollamaCloudUrl || 'https://ollama.com') : (configs.ollamaUrl || 'http://localhost:11434');
+          const cleanModel = maestroModel.replace('ollama/', '').replace('ollama-cloud/', '');
+          const authHeaders = isCloud && configs.ollamaCloudKey ? { 'Authorization': `Bearer ${configs.ollamaCloudKey}` } : undefined;
+          try {
+            const d = await callOllamaChat(targetUrl, cleanModel, [{ role: 'user', content: overridePrompt }], { headers: authHeaders });
+            retryResponse = d.choices?.[0]?.message?.content || '';
+          } catch { /* ignore retry errors */ }
         } else if (configs.openAiKey) {
           const res = await fetchWithTimeout('https://api.openai.com/v1/chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${configs.openAiKey}` }, body: JSON.stringify({ model: maestroModel, temperature: 0.2, messages: [{ role: 'user', content: overridePrompt }] }) });
           if (res.ok) { const d = await res.json(); retryResponse = d.choices?.[0]?.message?.content || ''; }
@@ -1011,17 +1068,33 @@ Original request: ${Array.isArray(userPrompt) ? userPrompt.filter((m: any) => m.
     };
   }
 
-  // ── Handle Create To-Do (FORMAT M) ──
-  if (parsedSpec.create_todo) {
-    const { content, target_date } = parsedSpec.create_todo;
-    const { createTodo } = await import('./todoService');
-    createTodo(db, { content, target_date: target_date || null });
+  // ── Handle Create To-Do(s) (FORMAT M — batch via create_todos array) ──
+  const todoItems: Array<{ content: string; target_date?: string | null }> =
+    Array.isArray(parsedSpec.create_todos) && parsedSpec.create_todos.length > 0
+      ? parsedSpec.create_todos
+      : parsedSpec.create_todo
+        ? [parsedSpec.create_todo]  // backward compat: singular form
+        : [];
 
-    const replyText = `✅ To-Do criado: "${content}"${target_date ? ` — prazo: ${new Date(target_date).toLocaleString('pt-BR')}` : ''}`;
-    parsedSpec.goal = `Criar to-do: ${content}`;
+  if (todoItems.length > 0) {
+    const { createTodo } = await import('./todoService');
+    const created: string[] = [];
+    for (const item of todoItems) {
+      const content = (item.content || '').trim();
+      if (!content) continue;
+      createTodo(db, { content, target_date: item.target_date || null });
+      created.push(content);
+    }
+
+    const replyText = created.length === 1
+      ? `✅ To-Do criado: "${created[0]}"`
+      : `✅ ${created.length} To-Dos criados:\n${created.map((c, i) => `${i + 1}. "${c}"`).join('\n')}`;
+
+    parsedSpec.goal = created.length === 1 ? `Criar to-do: ${created[0]}` : `Criar ${created.length} to-dos`;
     parsedSpec.steps = [];
     parsedSpec.conversational_reply = replyText;
 
+    const replyId = uuidv4();
     const specId = uuidv4();
     const conversationId = uuidv4();
     db.prepare("INSERT INTO Conversations (id, title) VALUES (?, 'To-Do Created')").run(conversationId);
@@ -1030,8 +1103,13 @@ Original request: ${Array.isArray(userPrompt) ? userPrompt.filter((m: any) => m.
       VALUES (?, ?, 'COMPLETED', ?)
     `).run(specId, conversationId, JSON.stringify(parsedSpec));
 
+    // Persist the assistant reply to ChatMessages so the next turn has correct context
+    const { saveMessage: _saveMsg } = await import('./archiveService');
+    _saveMsg(db, { id: replyId, role: 'assistant', content: replyText });
+
     return {
       specId,
+      replyId,  // frontend uses this to avoid saving a duplicate
       goal: parsedSpec.goal,
       conversational_reply: replyText,
       steps: [],

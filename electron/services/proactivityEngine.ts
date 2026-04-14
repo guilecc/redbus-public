@@ -11,7 +11,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import { getAgentState, setAgentState } from './orchestratorService';
 import { getEnvironmentalContext, toggleSensor, getSensorStatuses } from './sensorManager';
-import { fetchWithTimeout } from './llmService';
+import { fetchWithTimeout, callOllamaChat } from './llmService';
 import { saveMessage } from './archiveService';
 import { sendOSNotification } from './notificationService';
 import { getAppSetting, setAppSetting } from '../database';
@@ -239,26 +239,14 @@ async function callCognitiveFilter(configs: any, model: string, sysPrompt: strin
     }
     if (model.startsWith('ollama/') || model.startsWith('ollama-cloud/')) {
         const isCloud = model.startsWith('ollama-cloud/');
-        const targetUrl = isCloud 
-            ? (configs.ollamaCloudUrl || 'https://ollama.com') 
-            : (configs.ollamaUrl || 'http://localhost:11434');
+        const targetUrl = isCloud ? (configs.ollamaCloudUrl || 'https://ollama.com') : (configs.ollamaUrl || 'http://localhost:11434');
         const cleanModel = model.replace('ollama/', '').replace('ollama-cloud/', '');
-        const headers: any = { 'Content-Type': 'application/json' };
-        if (isCloud && configs.ollamaCloudKey) {
-            headers['Authorization'] = `Bearer ${configs.ollamaCloudKey}`;
-        }
-        
-        const res = await fetchWithTimeout(`${targetUrl}/v1/chat/completions`, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify({
-                model: cleanModel,
-                response_format: { type: 'json_object' },
-                messages: [{ role: 'system', content: sysPrompt }, { role: 'user', content: userPrompt }]
-            })
-        }, 300_000);
-        if (!res.ok) throw new Error(`Ollama error: ${res.status}`);
-        const d = await res.json(); return d.choices?.[0]?.message?.content || '';
+        const authHeaders = isCloud && configs.ollamaCloudKey ? { 'Authorization': `Bearer ${configs.ollamaCloudKey}` } : undefined;
+        const d = await callOllamaChat(targetUrl, cleanModel, [
+            { role: 'system', content: sysPrompt },
+            { role: 'user', content: userPrompt }
+        ], { headers: authHeaders, response_format: { type: 'json_object' } });
+        return d.choices?.[0]?.message?.content || '';
     }
     throw new Error(`Unsupported worker model for proactivity: ${model}`);
 }

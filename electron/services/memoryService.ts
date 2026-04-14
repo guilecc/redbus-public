@@ -1,4 +1,4 @@
-import { fetchWithTimeout } from './llmService';
+import { fetchWithTimeout, callOllamaChat } from './llmService';
 import {
   countUncompactedMessages,
   getUncompactedMessages,
@@ -122,6 +122,18 @@ export async function callWorkerLLM(db: any, systemPrompt: string, userPrompt: s
     if (!r.ok) throw new Error(`OpenAI error: ${await r.text()}`);
     const d = await r.json();
     return d.choices[0].message.content.trim();
+  }
+
+  if (model.startsWith('ollama/') || model.startsWith('ollama-cloud/')) {
+    const isCloud = model.startsWith('ollama-cloud/');
+    const targetUrl = isCloud ? (configs.ollamaCloudUrl || 'https://ollama.com') : (configs.ollamaUrl || 'http://localhost:11434');
+    const cleanModel = model.replace('ollama/', '').replace('ollama-cloud/', '');
+    const authHeaders = isCloud && configs.ollamaCloudKey ? { 'Authorization': `Bearer ${configs.ollamaCloudKey}` } : undefined;
+    const d = await callOllamaChat(targetUrl, cleanModel, [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt }
+    ], { headers: authHeaders });
+    return (d.choices?.[0]?.message?.content || '').trim();
   }
 
   throw new Error(`Unsupported worker model: ${model}`);
