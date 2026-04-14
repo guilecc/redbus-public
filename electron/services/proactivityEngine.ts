@@ -237,6 +237,29 @@ async function callCognitiveFilter(configs: any, model: string, sysPrompt: strin
         if (!res.ok) throw new Error(`OpenAI error: ${res.status}`);
         const d = await res.json(); return d.choices?.[0]?.message?.content || '';
     }
+    if (model.startsWith('ollama/') || model.startsWith('ollama-cloud/')) {
+        const isCloud = model.startsWith('ollama-cloud/');
+        const targetUrl = isCloud 
+            ? (configs.ollamaCloudUrl || 'https://ollama.com') 
+            : (configs.ollamaUrl || 'http://localhost:11434');
+        const cleanModel = model.replace('ollama/', '').replace('ollama-cloud/', '');
+        const headers: any = { 'Content-Type': 'application/json' };
+        if (isCloud && configs.ollamaCloudKey) {
+            headers['Authorization'] = `Bearer ${configs.ollamaCloudKey}`;
+        }
+        
+        const res = await fetchWithTimeout(`${targetUrl}/v1/chat/completions`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+                model: cleanModel,
+                response_format: { type: 'json_object' },
+                messages: [{ role: 'system', content: sysPrompt }, { role: 'user', content: userPrompt }]
+            })
+        }, 300_000);
+        if (!res.ok) throw new Error(`Ollama error: ${res.status}`);
+        const d = await res.json(); return d.choices?.[0]?.message?.content || '';
+    }
     throw new Error(`Unsupported worker model for proactivity: ${model}`);
 }
 
@@ -303,8 +326,9 @@ export async function evaluateProactivity(options?: { force?: boolean }): Promis
     const configs = _db.prepare('SELECT * FROM ProviderConfigs WHERE id = 1').get();
     if (!configs) return earlyReturn('NO_CONFIGS');
 
-    const model = configs.workerModel || 'gemini-2.5-flash';
-    const hasKey = (model.includes('gemini') && configs.googleKey) || (model.includes('claude') && configs.anthropicKey) || ((model.includes('gpt') || model.includes('o1') || model.includes('o3')) && configs.openAiKey);
+    const model = configs.workerModel || 'gemini-1.5-flash';
+    const isOllama = model.startsWith('ollama/') || model.startsWith('ollama-cloud/');
+    const hasKey = isOllama || (model.includes('gemini') && configs.googleKey) || (model.includes('claude') && configs.anthropicKey) || ((model.includes('gpt') || model.includes('o1') || model.includes('o3')) && configs.openAiKey);
     if (!hasKey) return earlyReturn(`NO_API_KEY for model ${model}`);
 
     console.log(`[ProactivityEngine] Evaluating with ${parts.length} context parts via ${model}...`);
@@ -397,9 +421,10 @@ export function startProactivityEngine(db: any, mainWindow: BrowserWindow, coold
     try {
         const configs = _db?.prepare?.('SELECT workerModel, googleKey, anthropicKey, openAiKey FROM ProviderConfigs WHERE id = 1').get();
         if (configs) {
-            const model = configs.workerModel || 'gemini-2.5-flash';
-            const hasKey = (model.includes('gemini') && !!configs.googleKey) || (model.includes('claude') && !!configs.anthropicKey) || ((model.includes('gpt') || model.includes('o1') || model.includes('o3')) && !!configs.openAiKey);
-            console.log(`  workerModel: ${model}, hasApiKey: ${hasKey}`);
+            const model = configs.workerModel || 'gemini-1.5-flash';
+            const isOllama = model.startsWith('ollama/') || model.startsWith('ollama-cloud/');
+            const hasKey = isOllama || (model.includes('gemini') && !!configs.googleKey) || (model.includes('claude') && !!configs.anthropicKey) || ((model.includes('gpt') || model.includes('o1') || model.includes('o3')) && !!configs.openAiKey);
+            console.log(`  workerModel: ${model}, hasSupport: ${hasKey}`);
         } else {
             console.log(`  ProviderConfigs: NOT FOUND`);
         }
