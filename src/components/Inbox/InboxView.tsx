@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Mail, RefreshCw, Trash2, AlertTriangle, Clock, Zap, Wifi, WifiOff, Loader2, Hash } from 'lucide-react';
+import { Mail, RefreshCw, Trash2, AlertTriangle, Clock, Zap, Wifi, WifiOff, Loader2, Hash, ListTodo } from 'lucide-react';
 import { MiniCalendar } from '../Layout/MiniCalendar';
 
 /* ── Types ── */
@@ -59,8 +59,8 @@ const ChannelBar: React.FC<{
 }> = ({ channels, onConnect }) => (
   <div className="inbox-channels">
     {channels.map(ch => (
-      <div 
-        key={ch.id} 
+      <div
+        key={ch.id}
         className={`inbox-ch-card ${ch.status}`}
         onClick={() => ch.status === 'disconnected' ? onConnect(ch.id) : undefined}
         title={ch.status === 'disconnected' ? `Conectar ao ${ch.label}` : ch.label}
@@ -86,6 +86,7 @@ export const InboxView: React.FC = () => {
   const [detail, setDetail] = useState<DigestRow | null>(null);
   const [generating, setGenerating] = useState(false);
   const [progressStep, setProgressStep] = useState('');
+  const [progressPercent, setProgressPercent] = useState(0);
   const [loading, setLoading] = useState(true);
   const [channels, setChannels] = useState<ChannelState[]>([]);
 
@@ -114,15 +115,21 @@ export const InboxView: React.FC = () => {
   useEffect(() => {
     window.redbusAPI.onDigestProgress((step: string) => {
       setProgressStep(step);
+      if (step.includes('navegando')) setProgressPercent(15);
+      else if (step.includes('filtrando')) setProgressPercent(40);
+      else if (step.includes('processando')) setProgressPercent(70);
+      else if (step.includes('salvando')) setProgressPercent(90);
     });
     window.redbusAPI.onDigestComplete((_data: { date: string; id: string; summary: any }) => {
       setGenerating(false);
       setProgressStep('');
+      setProgressPercent(0);
       fetchDigests();
     });
     window.redbusAPI.onDigestError((_data: { date: string; error: string }) => {
       setGenerating(false);
       setProgressStep('');
+      setProgressPercent(0);
     });
   }, [fetchDigests]);
 
@@ -211,10 +218,14 @@ export const InboxView: React.FC = () => {
           <div className="view-detail-empty">
             <Mail size={32} strokeWidth={1} />
             {generating && progressStep ? (
-              <>
-                <Loader2 size={18} className="spin" style={{ color: 'var(--accent)', marginTop: 12 }} />
+              <div className="inbox-progress-container">
+                <Loader2 size={24} className="spin" style={{ color: 'var(--accent)', marginBottom: 16 }} />
+                <div className="redbus-progress-bar">
+                  <div className="redbus-progress-fill" style={{ width: `${progressPercent}%` }} />
+                </div>
                 <p className="inbox-progress-text">{progressStep}</p>
-              </>
+                <span className="inbox-progress-pct">{progressPercent}%</span>
+              </div>
             ) : (
               <>
                 <p>{digestDates.has(selectedDate) ? 'carregando...' : `nenhum digest para ${fmtDate(selectedDate)}`}</p>
@@ -262,7 +273,21 @@ export const InboxView: React.FC = () => {
                   <h4>Itens de Ação</h4>
                   <ul className="mtg-action-list">
                     {summary.action_items.map((a, i) => (
-                      <li key={i}><input type="checkbox" disabled className="mtg-checkbox" /><span>{a}</span></li>
+                      <li key={i}>
+                        <input type="checkbox" disabled className="mtg-checkbox" />
+                        <span>{a}</span>
+                        <button
+                          className="inbox-add-todo-btn"
+                          onClick={async () => {
+                            try {
+                              await window.redbusAPI.createTodo({ content: a });
+                            } catch { }
+                          }}
+                          title="Adicionar ao To-Do"
+                        >
+                          <ListTodo size={9} /> to-do
+                        </button>
+                      </li>
                     ))}
                   </ul>
                 </div>

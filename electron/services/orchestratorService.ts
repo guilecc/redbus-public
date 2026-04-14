@@ -41,7 +41,7 @@ export function getAgentState(): AgentState {
 
 export function setAgentState(state: AgentState): void {
   if (_agentState !== state) {
-    console.log(`[AgentState] ${_agentState} → ${state}`);
+    // console.log(`[AgentState] ${_agentState} → ${state}`);
   }
   _agentState = state;
 }
@@ -431,6 +431,8 @@ DECISION RULES (evaluate in this order):
 - If the user asks about BOTH meetings AND emails/digests (e.g. "what happened this week?", "summarize my week", "o que está rolando sobre X?") → FORMAT K (parallel_tools) firing FORMAT H + FORMAT J simultaneously.
 - If the user asks to LOG IN, CONNECT, or AUTHENTICATE to Outlook 365 or Microsoft Teams → FORMAT I (inbox channel connect).
 - If the user asks you to change your name or set your name to something → FORMAT L (Rename Assistant).
+- If the user asks to remember something, create a task, add a to-do, or "me lembre de..." → FORMAT M (create_todo). Infer target_date from context.
+- If the user says they completed a task, finished something, or asks to check off a to-do → FORMAT N (check_todo).
 - If the user asks to read/analyze a native desktop app's screen → FORMAT G (accessibility tree read)
 - If the user asks about something they saw on screen recently → FORMAT F (screen memory search)
 - If you already have a skill for the task → FORMAT D (skill execution)
@@ -585,6 +587,29 @@ FORMAT L — Rename Assistant:
 }
 Use this when the user asks you to change your name. The new name will be saved and displayed in the UI.
 
+FORMAT M — Create To-Do:
+{
+  "thinking": "step-by-step reasoning...",
+  "goal": "string",
+  "create_todo": {
+    "content": "string (task description)",
+    "target_date": "ISO 8601 datetime string or null"
+  },
+  "steps": []
+}
+Use this when the user asks you to remind them of something, create a task, add a to-do, or any intent that implies a future action item. Infer target_date from natural language (e.g. "amanhã" → tomorrow's date, "sexta" → next Friday). If no date is mentioned, set target_date to null.
+
+FORMAT N — Complete To-Do:
+{
+  "thinking": "step-by-step reasoning...",
+  "goal": "string",
+  "check_todo": {
+    "query": "string (search term to find the todo to mark as done)"
+  },
+  "steps": []
+}
+Use this when the user says they finished a task, completed something, or asks to mark a to-do as done. The query is used to fuzzy-match the todo content.
+
 No markdown wrapping, just the raw JSON text.
 ${userProfilePrompt}
 FINAL REMINDER: Your output MUST be valid JSON matching one of the formats above. Any non-JSON output is a critical failure.`;
@@ -653,6 +678,32 @@ FINAL REMINDER: Your output MUST be valid JSON matching one of the formats above
     const data = await response.json();
     rawResponse = data.choices[0].message.content;
     logActivity('orchestrator', `[Maestro/Ollama] Response received (${(rawResponse || '').length} chars)`);
+  }
+  // Ollama Cloud
+  else if (maestroModel.startsWith('ollama-cloud/')) {
+    if (!configs.ollamaCloudKey) throw new Error('Ollama Cloud API Key is missing for maestro');
+    const targetUrl = configs.ollamaCloudUrl || 'https://ollama.com';
+    const cleanModel = maestroModel.replace('ollama-cloud/', '');
+    logActivity('orchestrator', `[Maestro/OllamaCloud] Calling ${cleanModel} at ${targetUrl}...`);
+    const response = await fetchWithTimeout(`${targetUrl}/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${configs.ollamaCloudKey}`
+      },
+      body: JSON.stringify({
+        model: cleanModel,
+        response_format: { type: 'json_object' },
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPromptText }
+        ]
+      })
+    }, 120_000);
+    if (!response.ok) throw new Error(`Ollama Cloud API Error (${response.status}): ${await response.text()}`);
+    const data = await response.json();
+    rawResponse = data.choices[0].message.content;
+    logActivity('orchestrator', `[Maestro/OllamaCloud] Response received (${(rawResponse || '').length} chars)`);
   }
   // Google Gemini
   else if (maestroModel.includes('gemini')) {
@@ -803,6 +854,15 @@ Original request: ${Array.isArray(userPrompt) ? userPrompt.filter((m: any) => m.
         } else if (maestroModel.includes('claude') && configs.anthropicKey) {
           const res = await fetchWithTimeout('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-api-key': configs.anthropicKey, 'anthropic-version': '2023-06-01' }, body: JSON.stringify({ model: maestroModel, max_tokens: 4096, temperature: 0.2, messages: [{ role: 'user', content: overridePrompt }] }) });
           if (res.ok) { const d = await res.json(); retryResponse = d.content?.[0]?.text || ''; }
+        } else if (maestroModel.startsWith('ollama-cloud/')) {
+          const targetUrl = configs.ollamaCloudUrl || 'https://ollama.com';
+          const cleanModel = maestroModel.replace('ollama-cloud/', '');
+          const res = await fetchWithTimeout(`${targetUrl}/v1/chat/completions`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${configs.ollamaCloudKey}` },
+            body: JSON.stringify({ model: cleanModel, temperature: 0.2, messages: [{ role: 'user', content: overridePrompt }] })
+          });
+          if (res.ok) { const d = await res.json(); retryResponse = d.choices?.[0]?.message?.content || ''; }
         } else if (configs.openAiKey) {
           const res = await fetchWithTimeout('https://api.openai.com/v1/chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${configs.openAiKey}` }, body: JSON.stringify({ model: maestroModel, temperature: 0.2, messages: [{ role: 'user', content: overridePrompt }] }) });
           if (res.ok) { const d = await res.json(); retryResponse = d.choices?.[0]?.message?.content || ''; }
@@ -947,6 +1007,67 @@ Original request: ${Array.isArray(userPrompt) ? userPrompt.filter((m: any) => m.
       specId,
       goal: parsedSpec.goal,
       conversational_reply: parsedSpec.conversational_reply,
+      steps: [],
+    };
+  }
+
+  // ── Handle Create To-Do (FORMAT M) ──
+  if (parsedSpec.create_todo) {
+    const { content, target_date } = parsedSpec.create_todo;
+    const { createTodo } = await import('./todoService');
+    createTodo(db, { content, target_date: target_date || null });
+
+    const replyText = `✅ To-Do criado: "${content}"${target_date ? ` — prazo: ${new Date(target_date).toLocaleString('pt-BR')}` : ''}`;
+    parsedSpec.goal = `Criar to-do: ${content}`;
+    parsedSpec.steps = [];
+    parsedSpec.conversational_reply = replyText;
+
+    const specId = uuidv4();
+    const conversationId = uuidv4();
+    db.prepare("INSERT INTO Conversations (id, title) VALUES (?, 'To-Do Created')").run(conversationId);
+    db.prepare(`
+      INSERT INTO LivingSpecs (id, conversationId, status, specJson)
+      VALUES (?, ?, 'COMPLETED', ?)
+    `).run(specId, conversationId, JSON.stringify(parsedSpec));
+
+    return {
+      specId,
+      goal: parsedSpec.goal,
+      conversational_reply: replyText,
+      steps: [],
+    };
+  }
+
+  // ── Handle Complete To-Do (FORMAT N) ──
+  if (parsedSpec.check_todo) {
+    const { query } = parsedSpec.check_todo;
+    const { findTodoByContent, completeTodo } = await import('./todoService');
+    const todo = findTodoByContent(db, query);
+    let replyText: string;
+
+    if (todo) {
+      completeTodo(db, todo.id);
+      replyText = `✅ To-Do concluído: "${todo.content}"`;
+    } else {
+      replyText = `Não encontrei um to-do pendente com "${query}". Verifique a lista de tarefas.`;
+    }
+
+    parsedSpec.goal = `Concluir to-do: ${query}`;
+    parsedSpec.steps = [];
+    parsedSpec.conversational_reply = replyText;
+
+    const specId = uuidv4();
+    const conversationId = uuidv4();
+    db.prepare("INSERT INTO Conversations (id, title) VALUES (?, 'To-Do Completed')").run(conversationId);
+    db.prepare(`
+      INSERT INTO LivingSpecs (id, conversationId, status, specJson)
+      VALUES (?, ?, 'COMPLETED', ?)
+    `).run(specId, conversationId, JSON.stringify(parsedSpec));
+
+    return {
+      specId,
+      goal: parsedSpec.goal,
+      conversational_reply: replyText,
       steps: [],
     };
   }

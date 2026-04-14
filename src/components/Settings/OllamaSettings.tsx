@@ -20,26 +20,40 @@ export function OllamaSettings({ ollamaUrl, setOllamaUrl, onModelSet, onInstalle
   }, [installed, onInstalledChange]);
 
   const LLM_CATALOG = [
-    // GLM 5.1
-    { id: 'glm4:2b', label: 'GLM 5.1 (2B)', family: 'GLM', req: '4GB', role: 'maestro', isWeak: true },
-    { id: 'glm4:9b', label: 'GLM 5.1 (9B)', family: 'GLM', req: '10GB', role: 'worker' },
-    { id: 'glm4:24b', label: 'GLM 5.1 (24B)', family: 'GLM', req: '18GB', role: 'worker' },
-    // Nemotron
-    { id: 'nemotron-cascade-2:30b', label: 'Nemotron Cascade 2 (30B)', family: 'Nvidia', req: '24GB', role: 'worker' },
-    // Qwen 3.5
-    { id: 'qwen3.5:0.8b', label: 'Qwen 3.5 (0.8B)', family: 'Qwen', req: '1GB', role: 'maestro', isWeak: true },
-    { id: 'qwen3.5:2b', label: 'Qwen 3.5 (2B)', family: 'Qwen', req: '2.7GB', role: 'maestro', isWeak: true },
-    { id: 'qwen3.5:4b', label: 'Qwen 3.5 (4B)', family: 'Qwen', req: '3.4GB', role: 'maestro' },
-    { id: 'qwen3.5:9b', label: 'Qwen 3.5 (9B)', family: 'Qwen', req: '6.6GB', role: 'worker' },
-    { id: 'qwen3.5:27b', label: 'Qwen 3.5 (27B)', family: 'Qwen', req: '17GB', role: 'worker' },
-    { id: 'qwen3.5:35b', label: 'Qwen 3.5 (35B)', family: 'Qwen', req: '24GB', role: 'worker' },
-    { id: 'qwen3.5:122b', label: 'Qwen 3.5 (122B)', family: 'Qwen', req: '81GB', role: 'worker' },
-    // Gemma 4
-    { id: 'gemma4:e2b', label: 'Gemma 4 (E2B)', family: 'Google', req: '7.2GB', role: 'maestro', isWeak: true },
-    { id: 'gemma4:e4b', label: 'Gemma 4 (E4B)', family: 'Google', req: '9.6GB', role: 'maestro' },
+    // 1. Llama 4 (Meta)
+    { id: 'llama4:8b', label: 'Llama 4 (8B)', family: 'Meta', req: '4.9GB', role: 'worker' },
+    { id: 'llama4:70b', label: 'Llama 4 (70B)', family: 'Meta', req: '42GB', role: 'worker' },
+    // 2. DeepSeek-V3.2 (DeepSeek)
+    { id: 'deepseek-v3.2:7b', label: 'DeepSeek-V3.2 (7B)', family: 'DeepSeek', req: '4.2GB', role: 'maestro' },
+    { id: 'deepseek-v3.2:70b', label: 'DeepSeek-V3.2 (70B)', family: 'DeepSeek', req: '43GB', role: 'worker' },
+    { id: 'deepseek-v3.2:671b', label: 'DeepSeek-V3.2 (671B)', family: 'DeepSeek', req: '390GB', role: 'worker' },
+    // 3. Qwen 3.5 (Alibaba)
+    { id: 'qwen3.5:0.8b', label: 'Qwen 3.5 (0.8B)', family: 'Alibaba', req: '550MB', role: 'maestro', isWeak: true },
+    { id: 'qwen3.5:4b', label: 'Qwen 3.5 (4B)', family: 'Alibaba', req: '2.6GB', role: 'maestro' },
+    { id: 'qwen3.5:9b', label: 'Qwen 3.5 (9B)', family: 'Alibaba', req: '5.5GB', role: 'worker' },
+    { id: 'qwen3.5:35b', label: 'Qwen 3.5 (35B)', family: 'Alibaba', req: '22GB', role: 'worker' },
+    // 4. Gemma 4 (Google)
+    { id: 'gemma4:e2b', label: 'Gemma 4 (E2B)', family: 'Google', req: '1.6GB', role: 'maestro', isWeak: true },
+    { id: 'gemma4:e4b', label: 'Gemma 4 (E4B)', family: 'Google', req: '3.1GB', role: 'maestro' },
     { id: 'gemma4:26b', label: 'Gemma 4 (26B)', family: 'Google', req: '18GB', role: 'worker' },
     { id: 'gemma4:31b', label: 'Gemma 4 (31B)', family: 'Google', req: '20GB', role: 'worker' },
-    { id: 'gemma4:31b-cloud', label: 'Gemma 4 (31B Cloud)', family: 'Google', req: 'API', role: 'worker' },
+    // 5. Phi-4 (Microsoft)
+    { id: 'phi4-mini:3.8b', label: 'Phi-4 Mini (3.8B)', family: 'Microsoft', req: '2.3GB', role: 'maestro' },
+    { id: 'phi4:14b', label: 'Phi-4 (14B)', family: 'Microsoft', req: '9.1GB', role: 'worker' },
+    // 6. Mistral / Ministral
+    { id: 'ministral-3:3b', label: 'Ministral 3 (3B)', family: 'Mistral', req: '2.1GB', role: 'maestro' },
+    { id: 'ministral-3:8b', label: 'Ministral 3 (8B)', family: 'Mistral', req: '5.2GB', role: 'worker' },
+    { id: 'mistral-large-3:123b', label: 'Mistral Large 3 (123B)', family: 'Mistral', req: '78GB', role: 'worker' },
+    // 7. Nemotron Cascade 2 (NVIDIA)
+    { id: 'nemotron-cascade-2:30b', label: 'Nemotron Cascade 2 (30B)', family: 'Nvidia', req: '19GB', role: 'worker' },
+    // 8. Command R+ v2 (Cohere)
+    { id: 'command-r-v2:35b', label: 'Command R+ v2 (35B)', family: 'Cohere', req: '21GB', role: 'worker' },
+    { id: 'command-r-v2:104b', label: 'Command R+ v2 (104B)', family: 'Cohere', req: '65GB', role: 'worker' },
+    // 9. Qwen3-Coder-Next
+    { id: 'qwen3-coder-next:7b', label: 'Qwen3 Coder Next (7B)', family: 'Alibaba', req: '4.5GB', role: 'worker' },
+    { id: 'qwen3-coder-next:32b', label: 'Qwen3 Coder Next (32B)', family: 'Alibaba', req: '19GB', role: 'worker' },
+    // 10. LFM-2.5-Thinking
+    { id: 'lfm2.5-thinking:1.2b', label: 'LFM-2.5-Thinking (1.2B)', family: 'Liquid', req: '850MB', role: 'maestro', isWeak: true },
   ];
 
   useEffect(() => {

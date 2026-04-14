@@ -84,6 +84,31 @@ CRITICAL RULES:
     const data = await response.json();
     return data.choices[0].message.content;
   }
+  
+  // Ollama Cloud
+  if (workerModel.startsWith('ollama-cloud/')) {
+    if (!configs.ollamaCloudKey) throw new Error('Ollama Cloud API Key is missing for worker');
+    const targetUrl = configs.ollamaCloudUrl || 'https://ollama.com';
+    const cleanModel = workerModel.replace('ollama-cloud/', '');
+    const response = await fetchWithTimeout(`${targetUrl}/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${configs.ollamaCloudKey}`
+      },
+      body: JSON.stringify({
+        model: cleanModel,
+        response_format: { type: 'json_object' },
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ]
+      })
+    });
+    if (!response.ok) throw new Error(`Ollama Cloud API Error (${response.status}): ${await response.text()}`);
+    const data = await response.json();
+    return data.choices[0].message.content;
+  }
 
   // Google Gemini
   if (workerModel.includes('gemini')) {
@@ -182,6 +207,24 @@ export async function callWorkerRaw(db: any, systemPrompt: string, userPrompt: s
       body: JSON.stringify({ model: cleanModel, messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }] })
     }, 300_000); // 5min timeout for local models
     if (!response.ok) throw new Error(`Ollama API Error (${response.status}): ${await response.text()}`);
+    const data = await response.json();
+    return data.choices[0].message.content;
+  }
+
+  // Ollama Cloud
+  if (workerModel.startsWith('ollama-cloud/')) {
+    if (!configs.ollamaCloudKey) throw new Error('Ollama Cloud API Key is missing');
+    const targetUrl = configs.ollamaCloudUrl || 'https://ollama.com';
+    const cleanModel = workerModel.replace('ollama-cloud/', '');
+    const response = await fetchWithTimeout(`${targetUrl}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${configs.ollamaCloudKey}` 
+      },
+      body: JSON.stringify({ model: cleanModel, messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }] })
+    });
+    if (!response.ok) throw new Error(`Ollama Cloud API Error (${response.status}): ${await response.text()}`);
     const data = await response.json();
     return data.choices[0].message.content;
   }
@@ -465,6 +508,50 @@ STRATEGY:
       throw new Error(`Ollama API Error (${response.status}): ${errorText}`);
     }
 
+    const data = await response.json();
+    const message = data.choices[0].message;
+
+    if (message.tool_calls) {
+      return {
+        tool_calls: message.tool_calls.map((tc: any) => ({
+          id: tc.id,
+          name: tc.function.name,
+          args: typeof tc.function.arguments === 'string' ? JSON.parse(tc.function.arguments) : tc.function.arguments
+        }))
+      };
+    }
+    return { content: message.content };
+  }
+
+  // Ollama Cloud (Tool Calling)
+  if (workerModel.startsWith('ollama-cloud/')) {
+    if (!configs.ollamaCloudKey) throw new Error('Ollama Cloud API Key is missing');
+    const targetUrl = configs.ollamaCloudUrl || 'https://ollama.com';
+    const cleanModel = workerModel.replace('ollama-cloud/', '');
+
+    const openAiTools = WORKER_TOOLS.map(t => ({
+      type: 'function',
+      function: {
+        name: t.name,
+        description: t.description,
+        parameters: t.input_schema
+      }
+    }));
+
+    const response = await fetchWithTimeout(`${targetUrl}/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${configs.ollamaCloudKey}`
+      },
+      body: JSON.stringify({
+        model: cleanModel,
+        messages: [{ role: 'system', content: systemMessage }, ...messages],
+        tools: openAiTools
+      })
+    });
+
+    if (!response.ok) throw new Error(`Ollama Cloud API Error (${response.status}): ${await response.text()}`);
     const data = await response.json();
     const message = data.choices[0].message;
 

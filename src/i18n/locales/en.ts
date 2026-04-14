@@ -53,6 +53,7 @@ export interface Translations {
       maestro: string;
       reqLabel: string;
       descLabel: string;
+      isCloudLabel: string;
       workerWarning: string;
     };
 
@@ -242,7 +243,7 @@ const en: Translations = {
 
     ollama: {
       title: 'Local Models (Ollama)',
-      subtitle: 'Run Gemma 4 locally for full privacy and zero cloud costs.',
+      subtitle: 'Run local models via Ollama (Gemma 4, Qwen, GLM) for full privacy and zero cloud costs.',
       url: 'Ollama API URL',
       online: 'Online',
       offline: 'Offline',
@@ -255,6 +256,7 @@ const en: Translations = {
       maestro: 'maestro',
       reqLabel: 'Requirements:',
       descLabel: 'Description:',
+      isCloudLabel: 'Cloud',
       workerWarning: 'Warning: This model is small. Using it as Worker might be slow or unreliable for complex extractions and code generation.'
     },
 

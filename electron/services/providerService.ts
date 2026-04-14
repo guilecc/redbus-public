@@ -3,20 +3,25 @@ export interface ModelOption {
   name: string;
 }
 
-export async function fetchAvailableModels(provider: 'openai' | 'anthropic' | 'google', apiKey: string): Promise<ModelOption[]> {
+export async function fetchAvailableModels(provider: 'openai' | 'anthropic' | 'google' | 'ollama-cloud', apiKey: string, customUrl?: string): Promise<ModelOption[]> {
   if (!apiKey) throw new Error('API Key is required to fetch models');
 
-  if (provider === 'openai') {
-    const response = await fetch('https://api.openai.com/v1/models', {
+  if (provider === 'openai' || provider === 'ollama-cloud') {
+    const baseUrl = provider === 'openai' ? 'https://api.openai.com/v1/models' : (customUrl ? `${customUrl}/v1/models` : 'https://ollama.com/v1/models');
+    const response = await fetch(baseUrl, {
       headers: { 'Authorization': `Bearer ${apiKey}` }
     });
     
-    if (!response.ok) throw new Error(`OpenAI API Error: ${await response.text()}`);
+    if (!response.ok) throw new Error(`${provider === 'openai' ? 'OpenAI' : 'Ollama Cloud'} API Error: ${await response.text()}`);
     const data = await response.json();
     
-    return data.data
-      .filter((m: any) => m.id.includes('gpt') || m.id.includes('o1') || m.id.includes('o3'))
-      .map((m: any) => ({
+    // For OpenAI we filter, for Ollama Cloud we might want all available or also filter
+    const list = data.data || [];
+    const models = (provider === 'openai')
+      ? list.filter((m: any) => m.id.includes('gpt') || m.id.includes('o1') || m.id.includes('o3'))
+      : list;
+
+    return models.map((m: any) => ({
         id: m.id,
         name: m.id
       }))
@@ -24,6 +29,7 @@ export async function fetchAvailableModels(provider: 'openai' | 'anthropic' | 'g
   }
 
   if (provider === 'anthropic') {
+    // ... rest unchanged
     const response = await fetch('https://api.anthropic.com/v1/models', {
       headers: {
         'x-api-key': apiKey,

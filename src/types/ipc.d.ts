@@ -4,6 +4,8 @@ export interface ProviderConfigs {
   anthropicKey?: string;
   googleKey?: string;
   ollamaUrl?: string;
+  ollamaCloudKey?: string;
+  ollamaCloudUrl?: string;
   maestroModel?: string;
   workerModel?: string;
   updatedAt?: string;
@@ -30,7 +32,7 @@ export interface RedBusAPI {
   saveProviderConfigs: (configs: ProviderConfigs) => Promise<IpcResponse<void>>;
 
   // Salva unitário (provider specífico conforme especificado nas regras da API)
-  saveProviderConfig: (provider: 'openai' | 'anthropic' | 'google', apiKey: string, defaultModel?: string) => Promise<IpcResponse<void>>;
+  saveProviderConfig: (provider: 'openai' | 'anthropic' | 'google' | 'ollama-cloud', apiKey: string, defaultModel?: string) => Promise<IpcResponse<void>>;
 
   // Testa o Worker isolado em um BrowserView
   runWorkerTest: (url: string, instruction: string) => Promise<IpcResponse<string>>;
@@ -53,8 +55,8 @@ export interface RedBusAPI {
   onHitlConsentRequest: (callback: (data: { requestId: string, reason: string, action: string }) => void) => void;
 
   // Dynamic Provider Configs
-  fetchAvailableModels: (provider: 'openai' | 'anthropic' | 'google', apiKey: string) => Promise<IpcResponse<{ id: string; name: string }[]>>;
-  
+  fetchAvailableModels: (provider: 'openai' | 'anthropic' | 'google' | 'ollama-cloud', apiKey: string, customUrl?: string) => Promise<IpcResponse<{ id: string; name: string }[]>>;
+
   // Ollama
   getOllamaStatus: (url?: string) => Promise<IpcResponse<boolean>>;
   listOllamaModels: (url?: string) => Promise<IpcResponse<{ name: string, model: string, modified_at: string, size: number, digest: string, details: any }[]>>;
@@ -202,6 +204,15 @@ export interface RedBusAPI {
   onChannelStatusChanged: (callback: (data: { channelId: string; status: string; errorMessage?: string }) => void) => void;
   onDraftsReady: (callback: (data: { drafts: InboxDraftReply[] }) => void) => void;
 
+  // To-Do system
+  createTodo: (payload: { content: string; target_date?: string | null }) => Promise<IpcResponse<TodoItem>>;
+  listTodos: (includeArchived?: boolean) => Promise<IpcResponse<TodoItem[]>>;
+  completeTodo: (todoId: string) => Promise<IpcResponse<{ completed: boolean }>>;
+  archiveTodo: (todoId: string) => Promise<IpcResponse<{ archived: boolean }>>;
+  unarchiveTodo: (todoId: string) => Promise<IpcResponse<{ unarchived: boolean }>>;
+  deleteTodo: (todoId: string) => Promise<IpcResponse<{ deleted: boolean }>>;
+  getTodo: (todoId: string) => Promise<IpcResponse<TodoItem>>;
+
   // Streaming events
   onStreamEvent: (callback: (event: StreamEvent) => void) => void;
   removeStreamEventListener: () => void;
@@ -327,6 +338,15 @@ interface InboxDraftReply {
   channel: string;
   sender: string;
   draft: string;
+}
+
+interface TodoItem {
+  id: string;
+  content: string;
+  target_date: string | null;
+  status: 'pending' | 'completed';
+  archived: number;
+  created_at: string;
 }
 
 // ── Streaming Events ──

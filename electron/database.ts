@@ -32,7 +32,7 @@ export function initializeDatabase(customPath?: string) {
     }
   }
 
-  const db = new Database(dbPath, { verbose: customPath ? undefined : console.log });
+  const db = new Database(dbPath);
 
   // Enable WAL mode for better concurrency and performance
   db.pragma('journal_mode = WAL');
@@ -147,6 +147,8 @@ export function initializeDatabase(customPath?: string) {
       anthropicKey TEXT,
       googleKey TEXT,
       ollamaUrl TEXT DEFAULT 'http://localhost:11434',
+      ollamaCloudKey TEXT,
+      ollamaCloudUrl TEXT DEFAULT 'https://api.ollama.com',
       maestroModel TEXT DEFAULT 'claude-3-7-sonnet-20250219',
       workerModel TEXT DEFAULT 'gemini-2.5-flash',
       updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -158,9 +160,15 @@ export function initializeDatabase(customPath?: string) {
 
   try {
     db.exec('ALTER TABLE ProviderConfigs ADD COLUMN ollamaUrl TEXT DEFAULT "http://localhost:11434";');
-  } catch (e) {
-    // Ignore if column exists
-  }
+  } catch (e) { }
+
+  try {
+    db.exec('ALTER TABLE ProviderConfigs ADD COLUMN ollamaCloudKey TEXT;');
+  } catch (e) { }
+
+  try {
+    db.exec('ALTER TABLE ProviderConfigs ADD COLUMN ollamaCloudUrl TEXT DEFAULT "https://ollama.com";');
+  } catch (e) { }
 
   // Migrate invalid model name to correct one if user has saved it previously
   try {
@@ -213,7 +221,7 @@ export function initializeDatabase(customPath?: string) {
   `);
 
   // --- MEMPALACE ARCHITECTURE ---
-  
+
   // Schema: MP_Wings (Projects and People)
   db.exec(`
     CREATE TABLE IF NOT EXISTS MP_Wings (
@@ -486,7 +494,19 @@ export function initializeDatabase(customPath?: string) {
   // Default: data_retention_days = 7
   // Data retention settings are now hardcoded and perpetual (MemPalace)
   // AppSettings for other flags keep existing logic
-  
+
+  // Schema 14: Todos — Task management system
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS Todos (
+      id TEXT PRIMARY KEY,
+      content TEXT NOT NULL,
+      target_date DATETIME,
+      status TEXT CHECK(status IN ('pending', 'completed')) DEFAULT 'pending',
+      archived INTEGER DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
   return db;
 }
 
@@ -528,7 +548,7 @@ export function getLanguagePromptDirective(db: ReturnType<typeof Database>): str
 export function cleanupOldMemories(db: ReturnType<typeof Database>): number {
   // Perpetual storage (MemPalace): We no longer delete ChatMessages or MemoryFacts.
   // We keep a 90-day safety cleanup for heavy data (ScreenMemory and Logs) only.
-  const days = 90; 
+  const days = 90;
 
   let totalDeleted = 0;
 
@@ -552,7 +572,7 @@ export function cleanupOldMemories(db: ReturnType<typeof Database>): number {
   } catch (_) { }
 
   // 5. MeetingMemory — meeting transcripts are kept (MemPalace)
-  
+
   // VACUUM — reclaim disk space
   if (totalDeleted > 0) {
     try {

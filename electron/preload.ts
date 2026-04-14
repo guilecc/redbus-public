@@ -35,7 +35,7 @@ const api: RedBusAPI = {
     ipcRenderer.removeAllListeners('hitl-consent-request');
     ipcRenderer.on('hitl-consent-request', (_, data) => callback(data));
   },
-  fetchAvailableModels: (provider, apiKey) => ipcRenderer.invoke('settings:fetch-models', provider, apiKey),
+  fetchAvailableModels: (provider, apiKey, customUrl) => ipcRenderer.invoke('settings:fetch-models', provider, apiKey, customUrl),
   executeSpec: (specId) => ipcRenderer.invoke('orchestrator:execute-spec', specId),
   executePythonSpec: (specId) => ipcRenderer.invoke('orchestrator:execute-python-spec', specId),
 
@@ -223,6 +223,15 @@ const api: RedBusAPI = {
     ipcRenderer.removeAllListeners('inbox:drafts-ready');
     ipcRenderer.on('inbox:drafts-ready', (_, data) => callback(data));
   },
+
+  // To-Do system
+  createTodo: (payload: { content: string; target_date?: string | null }) => ipcRenderer.invoke('todo:create', payload),
+  listTodos: (includeArchived?: boolean) => ipcRenderer.invoke('todo:list', includeArchived),
+  completeTodo: (todoId: string) => ipcRenderer.invoke('todo:complete', todoId),
+  archiveTodo: (todoId: string) => ipcRenderer.invoke('todo:archive', todoId),
+  unarchiveTodo: (todoId: string) => ipcRenderer.invoke('todo:unarchive', todoId),
+  deleteTodo: (todoId: string) => ipcRenderer.invoke('todo:delete', todoId),
+  getTodo: (todoId: string) => ipcRenderer.invoke('todo:get', todoId),
 
   // Streaming events (real-time feedback during processing)
   onStreamEvent: (callback: (event: any) => void) => {

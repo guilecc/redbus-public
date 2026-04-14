@@ -45,7 +45,7 @@ const ptBR: Translations = {
 
     ollama: {
       title: 'Modelos Locais (Ollama)',
-      subtitle: 'Rode o Gemma 4 localmente. Sem custos, 100% privado.',
+      subtitle: 'Rode modelos locais via Ollama (Gemma 4, Qwen, GLM). Sem custos, 100% privado.',
       url: 'URL da API do Ollama',
       online: 'Online',
       offline: 'Offline',
@@ -58,6 +58,7 @@ const ptBR: Translations = {
       maestro: 'maestro',
       reqLabel: 'Requisitos:',
       descLabel: 'Descrição:',
+      isCloudLabel: 'Nuvem',
       workerWarning: 'Aviso: Este modelo é pequeno. Usá-lo como Worker pode ser lento ou instável para extrações complexas e geração de código.'
     },
 

@@ -43,7 +43,7 @@ export async function processMessagesIntoMempalace(db: any, messages: ChatMessag
   try {
     const cleaned = raw.replace(/^\s*```[a-z]*\n?/i, '').replace(/\n?```\s*$/i, '').trim();
     const parsed = JSON.parse(cleaned);
-    
+
     if (!Array.isArray(parsed)) return;
 
     for (const item of parsed) {
@@ -52,7 +52,7 @@ export async function processMessagesIntoMempalace(db: any, messages: ChatMessag
       // Ensure Wing exists
       const wingIdSafe = item.wing.toLowerCase().replace(/[^a-z0-9]/g, '_');
       db.prepare(`
-        INSERT OR IGNORE INTO MP_Wings (id, name, type) 
+        INSERT OR IGNORE INTO MP_Wings (id, name, type)
         VALUES (?, ?, ?)
       `).run(wingIdSafe, item.wing, item.wing_type || 'topic');
 
@@ -93,3 +93,50 @@ export async function processMessagesIntoMempalace(db: any, messages: ChatMessag
   }
 }
 
+
+
+/**
+ * Store a To-Do lifecycle event directly in MemPalace (hall_events or hall_facts).
+ * Called when a todo is created or completed — no LLM compression needed.
+ */
+export function storeTodoEventInMempalace(
+  db: any,
+  event: { type: 'created' | 'completed'; content: string; todoId: string; target_date?: string | null }
+): void {
+  try {
+    const { v4: uuidv4 } = require('uuid');
+
+    // Ensure wing & room exist
+    const wingName = 'Tarefas';
+    let wing = db.prepare('SELECT id FROM MP_Wings WHERE name = ?').get(wingName);
+    if (!wing) {
+      const wId = uuidv4();
+      db.prepare('INSERT INTO MP_Wings (id, name, type) VALUES (?, ?, ?)').run(wId, wingName, 'topic');
+      wing = { id: wId };
+    }
+
+    const roomName = 'To-Dos';
+    let room = db.prepare('SELECT id FROM MP_Rooms WHERE wing_id = ? AND name = ?').get(wing.id, roomName);
+    if (!room) {
+      const rId = uuidv4();
+      db.prepare('INSERT INTO MP_Rooms (id, wing_id, name) VALUES (?, ?, ?)').run(rId, wing.id, roomName);
+      room = { id: rId };
+    }
+
+    const hallType = event.type === 'created' ? 'hall_events' : 'hall_facts';
+    const aaak = event.type === 'created'
+      ? `TODO.new:"${event.content.slice(0, 80)}"${event.target_date ? ` | DUE:${event.target_date}` : ''}`
+      : `TODO.done:"${event.content.slice(0, 80)}"`;
+
+    const closetId = uuidv4();
+    db.prepare('INSERT INTO MP_Closets (id, room_id, hall_type, aaak_content) VALUES (?, ?, ?, ?)')
+      .run(closetId, room.id, hallType, aaak);
+
+    const drawerId = uuidv4();
+    db.prepare('INSERT INTO MP_Drawers (id, closet_id, raw_content, source) VALUES (?, ?, ?, ?)')
+      .run(drawerId, closetId, JSON.stringify(event), 'todo_system');
+
+  } catch (e) {
+    console.warn('[aaakService] Failed to store todo event in MemPalace:', e);
+  }
+}

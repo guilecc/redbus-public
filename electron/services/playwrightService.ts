@@ -14,7 +14,7 @@ const CHANNEL_URLS: Record<ChannelId, string> = {
   teams: 'https://teams.cloud.microsoft/',
 };
 const PARTITION_NAMES: Record<ChannelId, string> = {
-  outlook: 'persist:outlook', teams: 'persist:teams',
+  outlook: 'persist:m365', teams: 'persist:m365',
 };
 const LOGIN_PATTERNS = ['login.microsoftonline.com', 'login.live.com', 'login.microsoft.com'];
 

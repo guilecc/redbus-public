@@ -278,6 +278,24 @@ export async function evaluateProactivity(options?: { force?: boolean }): Promis
             if (rows.length > 0) console.log(`[ProactivityEngine] ScreenMemory: ${rows.length} recent entries`);
         } catch { /* table may not exist */ }
     }
+    // ── Pending To-Dos with approaching/overdue deadlines ──
+    if (_db) {
+        try {
+            const { getPendingTodosWithDeadline } = require('./todoService');
+            const urgentTodos = getPendingTodosWithDeadline(_db, 2 * 60 * 60 * 1000); // within 2 hours
+            if (urgentTodos.length > 0) {
+                const now = new Date();
+                const todoLines = urgentTodos.map((t: any) => {
+                    const due = new Date(t.target_date);
+                    const diffMs = due.getTime() - now.getTime();
+                    const label = diffMs < 0 ? `VENCIDO há ${Math.round(-diffMs / 60000)} min` : `vence em ${Math.round(diffMs / 60000)} min`;
+                    return `• "${t.content}" — ${label}`;
+                });
+                parts.push(`⚠️ TAREFAS PENDENTES COM PRAZO PRÓXIMO:\n${todoLines.join('\n')}\nSugira ao usuário como resolver essas tarefas, levando em conta o que ele está fazendo agora (janela ativa, clipboard).`);
+            }
+        } catch { /* todoService may not be available */ }
+    }
+
     if (parts.length === 0 && !force) return earlyReturn('NO_CONTEXT');
     if (parts.length === 0 && force) parts.push('(No environmental context available — sensors may be off. Respond with a brief, friendly check-in message.)');
     if (!_db) return earlyReturn('NO_DB');

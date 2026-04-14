@@ -12,6 +12,7 @@ import { MeetingsView } from './components/Meetings/MeetingsView';
 import { ActivityConsole } from './components/ActivityConsole/ActivityConsole';
 import { UnifiedInboxSetup } from './components/UnifiedInbox/UnifiedInboxSetup';
 import { InboxView } from './components/Inbox/InboxView';
+import { TodoManager } from './components/Todos/TodoManager';
 import { HistoryView } from './components/History/HistoryView';
 import { useStreamingResponse } from './hooks/useStreamingResponse';
 import { OllamaSettings } from './components/Settings/OllamaSettings';
@@ -28,7 +29,14 @@ const IS_WIDGET = window.location.hash.includes('/widget');
 export default function App() {
   if (IS_WIDGET) return <WidgetOverlay />;
   const { t, setLang } = useTranslation();
-  const [keys, setKeys] = useState({ openAiKey: '', anthropicKey: '', googleKey: '', ollamaUrl: 'http://localhost:11434' });
+  const [keys, setKeys] = useState({
+    openAiKey: '',
+    anthropicKey: '',
+    googleKey: '',
+    ollamaUrl: 'http://localhost:11434',
+    ollamaCloudKey: '',
+    ollamaCloudUrl: 'https://ollama.com'
+  });
   const [models, setModels] = useState({ maestroModel: 'claude-3-7-sonnet-20250219', workerModel: 'gemini-2.0-flash' });
   const [saving, setSaving] = useState(false);
   const [loaded, setLoaded] = useState(false);
@@ -56,8 +64,8 @@ export default function App() {
   const [assistantName, setAssistantName] = useState<string>('');
   const [userName, setUserName] = useState<string>('');
 
-  const [apiStatus, setApiStatus] = useState<Record<string, ProviderStatus>>({ openai: 'idle', anthropic: 'idle', google: 'idle' });
-  const [availableModels, setAvailableModels] = useState<Record<string, ModelOpt[]>>({ openai: [], anthropic: [], google: [] });
+  const [apiStatus, setApiStatus] = useState<Record<string, ProviderStatus>>({ openai: 'idle', anthropic: 'idle', google: 'idle', ollamaCloud: 'idle' });
+  const [availableModels, setAvailableModels] = useState<Record<string, ModelOpt[]>>({ openai: [], anthropic: [], google: [], ollamaCloud: [] });
 
   // Proactivity Settings
   type ProactivityLevel = 'OFF' | 'LOW' | 'MEDIUM' | 'HIGH';
@@ -88,23 +96,25 @@ export default function App() {
   const [initialMeetingId, setInitialMeetingId] = useState<string | null>(null);
   const [ollamaModels, setOllamaModels] = useState<string[]>([]);
 
-  const validateKey = async (provider: 'openai' | 'anthropic' | 'google', key: string) => {
+  const validateKey = async (provider: 'openai' | 'anthropic' | 'google' | 'ollama-cloud', key: string) => {
     if (!key) return;
-    setApiStatus(prev => ({ ...prev, [provider]: 'loading' }));
+    const statusKey = provider === 'ollama-cloud' ? 'ollamaCloud' : provider;
+    setApiStatus(prev => ({ ...prev, [statusKey]: 'loading' }));
     try {
       if (window.redbusAPI) {
-        const response = await window.redbusAPI.fetchAvailableModels(provider, key);
+        const customUrl = provider === 'ollama-cloud' ? keys.ollamaCloudUrl : undefined;
+        const response = await window.redbusAPI.fetchAvailableModels(provider, key, customUrl);
         if (response.status === 'OK' && response.data) {
-          setAvailableModels(prev => ({ ...prev, [provider]: response.data as ModelOpt[] }));
-          setApiStatus(prev => ({ ...prev, [provider]: 'valid' }));
+          setAvailableModels(prev => ({ ...prev, [statusKey]: response.data as ModelOpt[] }));
+          setApiStatus(prev => ({ ...prev, [statusKey]: 'valid' }));
         } else {
-          setApiStatus(prev => ({ ...prev, [provider]: 'invalid' }));
-          setAvailableModels(prev => ({ ...prev, [provider]: [] }));
+          setApiStatus(prev => ({ ...prev, [statusKey]: 'invalid' }));
+          setAvailableModels(prev => ({ ...prev, [statusKey]: [] }));
         }
       }
     } catch (e) {
-      setApiStatus(prev => ({ ...prev, [provider]: 'invalid' }));
-      setAvailableModels(prev => ({ ...prev, [provider]: [] }));
+      setApiStatus(prev => ({ ...prev, [statusKey]: 'invalid' }));
+      setAvailableModels(prev => ({ ...prev, [statusKey]: [] }));
     }
   };
 
@@ -148,12 +158,14 @@ export default function App() {
 
         const response = await window.redbusAPI.getProviderConfigs();
         if (response.status === 'OK' && response.data) {
-          const { openAiKey, anthropicKey, googleKey, ollamaUrl, maestroModel, workerModel } = response.data;
+          const { openAiKey, anthropicKey, googleKey, ollamaUrl, ollamaCloudKey, ollamaCloudUrl, maestroModel, workerModel } = response.data;
           setKeys({
             openAiKey: openAiKey || '',
             anthropicKey: anthropicKey || '',
             googleKey: googleKey || '',
             ollamaUrl: ollamaUrl || 'http://localhost:11434',
+            ollamaCloudKey: ollamaCloudKey || '',
+            ollamaCloudUrl: ollamaCloudUrl || 'https://ollama.com',
           });
           if (maestroModel || workerModel) {
             setModels(curr => ({
@@ -164,6 +176,7 @@ export default function App() {
           if (openAiKey) validateKey('openai', openAiKey);
           if (anthropicKey) validateKey('anthropic', anthropicKey);
           if (googleKey) validateKey('google', googleKey);
+          if (ollamaCloudKey) validateKey('ollama-cloud', ollamaCloudKey);
 
           if (ollamaUrl) {
             const list = await window.redbusAPI.listOllamaModels(ollamaUrl);
@@ -623,6 +636,10 @@ export default function App() {
           <InboxView />
         )}
 
+        {activeView === 'todos' && (
+          <TodoManager />
+        )}
+
         {activeView === 'meeting-review' && meetingReviewData && (
           <MeetingReview
             data={meetingReviewData}
@@ -713,6 +730,17 @@ export default function App() {
                             {apiStatus.google === 'invalid' && <XCircle color="#ff6b2b" size={16} />}
                           </div>
                         </div>
+                        <div className="form-group">
+                          <label>ollama cloud</label>
+                          <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                            <input type="password" style={{ flex: 1 }} placeholder="api key..." value={keys.ollamaCloudKey} onChange={e => setKeys(k => ({ ...k, ollamaCloudKey: e.target.value }))} />
+                            <button className="save-btn" onClick={() => validateKey('ollama-cloud', keys.ollamaCloudKey)}>
+                              {apiStatus.ollamaCloud === 'loading' ? <Loader2 size={13} className="spinner" /> : t.settings.llm.check}
+                            </button>
+                            {apiStatus.ollamaCloud === 'valid' && <CheckCircle2 color="#ff6b2b" size={16} />}
+                            {apiStatus.ollamaCloud === 'invalid' && <XCircle color="#ff6b2b" size={16} />}
+                          </div>
+                        </div>
                       </div>
                     </section>
 
@@ -733,6 +761,9 @@ export default function App() {
                             </optgroup>
                             <optgroup label="Google">
                               {availableModels.google.length > 0 ? availableModels.google.map(m => <option key={m.id} value={m.id}>{m.name}</option>) : <option value="none" disabled>—</option>}
+                            </optgroup>
+                            <optgroup label="Ollama Cloud">
+                              {availableModels.ollamaCloud.length > 0 ? availableModels.ollamaCloud.map(m => <option key={m.id} value={`ollama-cloud/${m.id}`}>{m.name}</option>) : <option value="none" disabled>—</option>}
                             </optgroup>
                             <optgroup label="atual">
                               <option value={models.maestroModel} disabled>{models.maestroModel}</option>
@@ -756,6 +787,9 @@ export default function App() {
                             </optgroup>
                             <optgroup label="OpenAI">
                               {availableModels.openai.length > 0 ? availableModels.openai.map(m => <option key={m.id} value={m.id}>{m.name}</option>) : <option value="none" disabled>—</option>}
+                            </optgroup>
+                            <optgroup label="Ollama Cloud">
+                              {availableModels.ollamaCloud.length > 0 ? availableModels.ollamaCloud.map(m => <option key={m.id} value={`ollama-cloud/${m.id}`}>{m.name}</option>) : <option value="none" disabled>—</option>}
                             </optgroup>
                             <optgroup label="atual">
                               <option value={models.workerModel} disabled>{models.workerModel}</option>

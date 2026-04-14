@@ -26,6 +26,7 @@ import { processAudio, analyzeTranscriptFromText } from './services/audioAdapter
 import { saveMeetingMemory, searchMeetingMemory, listMeetings, getMeetingDetails, getMeetingContextForPrompt, deleteMeeting, addManualMeeting, ManualMeetingPayload } from './services/meetingService';
 import { getRecentLogs, clearLogBuffer } from './services/activityLogger';
 import { generateDigestFromMessages, saveDigest, listDigests, getDigestDetails, getDigestByDate, deleteDigest, DigestMessage } from './services/digestService';
+import { createTodo, listTodos, completeTodo, archiveTodo, unarchiveTodo, deleteTodo, getTodo, CreateTodoPayload } from './services/todoService';
 
 export function setupIpcHandlers(db: ReturnType<typeof Database> | null | any, mainWindow: BrowserWindow | null) {
   // Comunicação segura via JSON estruturado
@@ -94,7 +95,7 @@ export function setupIpcHandlers(db: ReturnType<typeof Database> | null | any, m
   ipcMain.handle('settings:save', async (event, payload: any) => {
     if (!db) return { status: 'ERROR', error: 'DB not initialized' };
     try {
-      const { openAiKey, anthropicKey, googleKey, ollamaUrl, maestroModel, workerModel } = payload;
+      const { openAiKey, anthropicKey, googleKey, ollamaUrl, ollamaCloudKey, ollamaCloudUrl, maestroModel, workerModel } = payload;
 
       const stmt = db.prepare(`
         UPDATE ProviderConfigs 
@@ -103,13 +104,15 @@ export function setupIpcHandlers(db: ReturnType<typeof Database> | null | any, m
           anthropicKey = COALESCE(?, anthropicKey),
           googleKey = COALESCE(?, googleKey),
           ollamaUrl = COALESCE(?, ollamaUrl),
+          ollamaCloudKey = ?,
+          ollamaCloudUrl = COALESCE(?, ollamaCloudUrl),
           maestroModel = COALESCE(?, maestroModel),
           workerModel = COALESCE(?, workerModel),
           updatedAt = CURRENT_TIMESTAMP
         WHERE id = 1
       `);
 
-      stmt.run(openAiKey, anthropicKey, googleKey, ollamaUrl, maestroModel, workerModel);
+      stmt.run(openAiKey, anthropicKey, googleKey, ollamaUrl, ollamaCloudKey, ollamaCloudUrl, maestroModel, workerModel);
       return { status: 'OK' };
     } catch (e) {
       console.error(e);
@@ -143,9 +146,14 @@ export function setupIpcHandlers(db: ReturnType<typeof Database> | null | any, m
       return { status: 'ERROR', error: String(e) };
     }
   });
-  ipcMain.handle('settings:fetch-models', async (event, provider: 'openai' | 'anthropic' | 'google', apiKey: string) => {
+  ipcMain.handle('settings:fetch-models', async (event, provider: 'openai' | 'anthropic' | 'google' | 'ollama-cloud', apiKey: string, urlOverride?: string) => {
     try {
-      const models = await fetchAvailableModels(provider, apiKey);
+      let customUrl = urlOverride;
+      if (!customUrl && provider === 'ollama-cloud' && db) {
+        const row = db.prepare('SELECT ollamaCloudUrl FROM ProviderConfigs WHERE id = 1').get() as any;
+        customUrl = row?.ollamaCloudUrl;
+      }
+      const models = await fetchAvailableModels(provider, apiKey, customUrl);
       return { status: 'OK', data: models };
     } catch (e) {
       console.error('Fetch Models Failed:', e);
@@ -508,7 +516,7 @@ export function setupIpcHandlers(db: ReturnType<typeof Database> | null | any, m
       factoryReset(db, userDataPath);
 
       // Clear browser sessions (cookies, localStorage, cache)
-      const partitions = ['persist:redbus', 'persist:outlook', 'persist:teams'];
+      const partitions = ['persist:redbus', 'persist:m365', 'persist:outlook', 'persist:teams'];
       let totalCookiesRemoved = 0;
 
       for (const partition of partitions) {
@@ -1484,6 +1492,84 @@ export function setupIpcHandlers(db: ReturnType<typeof Database> | null | any, m
       const deleted = deleteDigest(db, digestId);
       if (!deleted) return { status: 'ERROR', error: 'Not found' };
       return { status: 'OK', data: { deleted: true } };
+    } catch (e) {
+      return { status: 'ERROR', error: String(e) };
+    }
+  });
+
+  // ═══════════════════════════════════════════
+  // To-Do handlers
+  // ═══════════════════════════════════════════
+
+  ipcMain.handle('todo:create', async (_event, payload: CreateTodoPayload) => {
+    try {
+      if (!db) throw new Error('DB not initialized');
+      const todo = createTodo(db, payload);
+      return { status: 'OK', data: todo };
+    } catch (e) {
+      return { status: 'ERROR', error: String(e) };
+    }
+  });
+
+  ipcMain.handle('todo:list', async (_event, includeArchived?: boolean) => {
+    try {
+      if (!db) throw new Error('DB not initialized');
+      return { status: 'OK', data: listTodos(db, includeArchived) };
+    } catch (e) {
+      return { status: 'ERROR', error: String(e) };
+    }
+  });
+
+  ipcMain.handle('todo:complete', async (_event, todoId: string) => {
+    try {
+      if (!db) throw new Error('DB not initialized');
+      const success = completeTodo(db, todoId);
+      if (!success) return { status: 'ERROR', error: 'Not found' };
+      return { status: 'OK', data: { completed: true } };
+    } catch (e) {
+      return { status: 'ERROR', error: String(e) };
+    }
+  });
+
+  ipcMain.handle('todo:archive', async (_event, todoId: string) => {
+    try {
+      if (!db) throw new Error('DB not initialized');
+      const success = archiveTodo(db, todoId);
+      if (!success) return { status: 'ERROR', error: 'Not found' };
+      return { status: 'OK', data: { archived: true } };
+    } catch (e) {
+      return { status: 'ERROR', error: String(e) };
+    }
+  });
+
+  ipcMain.handle('todo:unarchive', async (_event, todoId: string) => {
+    try {
+      if (!db) throw new Error('DB not initialized');
+      const success = unarchiveTodo(db, todoId);
+      if (!success) return { status: 'ERROR', error: 'Not found' };
+      return { status: 'OK', data: { unarchived: true } };
+    } catch (e) {
+      return { status: 'ERROR', error: String(e) };
+    }
+  });
+
+  ipcMain.handle('todo:delete', async (_event, todoId: string) => {
+    try {
+      if (!db) throw new Error('DB not initialized');
+      const success = deleteTodo(db, todoId);
+      if (!success) return { status: 'ERROR', error: 'Not found' };
+      return { status: 'OK', data: { deleted: true } };
+    } catch (e) {
+      return { status: 'ERROR', error: String(e) };
+    }
+  });
+
+  ipcMain.handle('todo:get', async (_event, todoId: string) => {
+    try {
+      if (!db) throw new Error('DB not initialized');
+      const todo = getTodo(db, todoId);
+      if (!todo) return { status: 'ERROR', error: 'Not found' };
+      return { status: 'OK', data: todo };
     } catch (e) {
       return { status: 'ERROR', error: String(e) };
     }

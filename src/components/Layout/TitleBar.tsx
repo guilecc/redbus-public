@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from '../../i18n/index.js';
-import { Settings, Archive, ArrowLeft, Code2, Timer, ClipboardCopy, AppWindow, Eye, Layers, Mic, Video, Terminal, Mail, MessageSquare } from 'lucide-react';
+import { Settings, Archive, ArrowLeft, Code2, Timer, ClipboardCopy, AppWindow, Eye, Layers, Mic, Video, Terminal, Mail, MessageSquare, ListTodo } from 'lucide-react';
 
 type ProactivityLevel = 'OFF' | 'LOW' | 'MEDIUM' | 'HIGH';
 
@@ -118,99 +118,102 @@ export const TitleBar: React.FC<TitleBarProps> = ({ subtitle, activeView, onView
 
       <div className="titlebar-actions">
         {/* ── Sensores ambientais (container agrupado) ── */}
-            {/* ── Sensores ambientais (container agrupado) ── */}
-            <div className="titlebar-sensor-group">
-              <button
-                className={`titlebar-sensor${clipboardEnabled ? ' active' : ''}`}
-                onClick={toggleClipboard}
-                title={clipboardEnabled ? t.titlebar.sensors.clipboard.on : t.titlebar.sensors.clipboard.off}
-                data-testid="sensor-clipboard-toggle"
-              >
-                <ClipboardCopy size={11} />
-              </button>
-              <button
-                className={`titlebar-sensor${activeWindowEnabled ? ' active' : ''}`}
-                onClick={toggleActiveWindow}
-                title={activeWindowEnabled ? t.titlebar.sensors.activeWindow.on : t.titlebar.sensors.activeWindow.off}
-                data-testid="sensor-activewindow-toggle"
-              >
-                <AppWindow size={11} />
-              </button>
-              <button
-                className={`titlebar-sensor${visionEnabled ? ' active' : ''}`}
-                onClick={toggleVision}
-                title={visionEnabled ? t.titlebar.sensors.vision.on : t.titlebar.sensors.vision.off}
-                data-testid="sensor-vision-toggle"
-              >
-                <Eye size={11} />
-              </button>
-              <button
-                className={`titlebar-sensor${accessibilityEnabled ? ' active' : ''}`}
-                onClick={toggleAccessibility}
-                title={accessibilityEnabled ? t.titlebar.sensors.accessibility.on : t.titlebar.sensors.accessibility.off}
-                data-testid="sensor-accessibility-toggle"
-              >
-                <Layers size={11} />
-              </button>
-              <button
-                className={`titlebar-sensor${widgetOpen ? ' active' : ''}`}
-                onClick={toggleMicrophone}
-                title={widgetOpen ? t.titlebar.sensors.mic.on : t.titlebar.sensors.mic.off}
-                data-testid="sensor-microphone-toggle"
-              >
-                <Mic size={11} />
-              </button>
+        {/* ── Sensores ambientais (container agrupado) ── */}
+        <div className="titlebar-sensor-group">
+          <button
+            className={`titlebar-sensor${clipboardEnabled ? ' active' : ''}`}
+            onClick={toggleClipboard}
+            title={clipboardEnabled ? t.titlebar.sensors.clipboard.on : t.titlebar.sensors.clipboard.off}
+            data-testid="sensor-clipboard-toggle"
+          >
+            <ClipboardCopy size={11} />
+          </button>
+          <button
+            className={`titlebar-sensor${activeWindowEnabled ? ' active' : ''}`}
+            onClick={toggleActiveWindow}
+            title={activeWindowEnabled ? t.titlebar.sensors.activeWindow.on : t.titlebar.sensors.activeWindow.off}
+            data-testid="sensor-activewindow-toggle"
+          >
+            <AppWindow size={11} />
+          </button>
+          <button
+            className={`titlebar-sensor${visionEnabled ? ' active' : ''}`}
+            onClick={toggleVision}
+            title={visionEnabled ? t.titlebar.sensors.vision.on : t.titlebar.sensors.vision.off}
+            data-testid="sensor-vision-toggle"
+          >
+            <Eye size={11} />
+          </button>
+          <button
+            className={`titlebar-sensor${accessibilityEnabled ? ' active' : ''}`}
+            onClick={toggleAccessibility}
+            title={accessibilityEnabled ? t.titlebar.sensors.accessibility.on : t.titlebar.sensors.accessibility.off}
+            data-testid="sensor-accessibility-toggle"
+          >
+            <Layers size={11} />
+          </button>
+          <button
+            className={`titlebar-sensor${widgetOpen ? ' active' : ''}`}
+            onClick={toggleMicrophone}
+            title={widgetOpen ? t.titlebar.sensors.mic.on : t.titlebar.sensors.mic.off}
+            data-testid="sensor-microphone-toggle"
+          >
+            <Mic size={11} />
+          </button>
 
-            </div>
+        </div>
 
-            {/* ── Proactividade ── */}
-            <button
-              className={`titlebar-proactivity${proactivityLevel !== 'OFF' ? ' active' : ''}`}
-              onClick={cycleProactivity}
-              title={t.titlebar.proactivity[proactivityLevel]}
-              data-testid="proactivity-toggle"
-              style={{ color: PROACTIVITY_META[proactivityLevel].color }}
-            >
-              <span className="proactivity-icon">{PROACTIVITY_META[proactivityLevel].icon}</span>
-              <span className="proactivity-label">{proactivityLevel}</span>
-            </button>
+        {/* ── Proactividade ── */}
+        <button
+          className={`titlebar-proactivity${proactivityLevel !== 'OFF' ? ' active' : ''}`}
+          onClick={cycleProactivity}
+          title={t.titlebar.proactivity[proactivityLevel]}
+          data-testid="proactivity-toggle"
+          style={{ color: PROACTIVITY_META[proactivityLevel].color }}
+        >
+          <span className="proactivity-icon">{PROACTIVITY_META[proactivityLevel].icon}</span>
+          <span className="proactivity-label">{proactivityLevel}</span>
+        </button>
 
-            {/* ── Separador ── */}
-            <div className="titlebar-separator" />
+        {/* ── Separador ── */}
+        <div className="titlebar-separator" />
 
-            {/* ── Navegação (à direita) ── */}
-            <button className={`titlebar-btn${activeView === 'chat' ? ' active' : ''}`} onClick={() => onViewChange('chat')} title={t.titlebar.nav.chat} data-testid="chat-btn">
-              <MessageSquare size={13} />
-            </button>
-            <button className={`titlebar-btn${activeView === 'meetings' ? ' active' : ''}`} onClick={() => onViewChange('meetings')} title={t.titlebar.nav.meetings} data-testid="meetings-btn">
-              <Video size={13} />
-            </button>
-            <button className={`titlebar-btn${activeView === 'inbox' ? ' active' : ''}`} onClick={() => onViewChange('inbox')} title={t.titlebar.nav.inbox} data-testid="inbox-btn">
-              <Mail size={13} />
-            </button>
-            <button className={`titlebar-btn${activeView === 'routines' ? ' active' : ''}`} onClick={() => onViewChange('routines')} title={t.titlebar.nav.routines} data-testid="routines-btn">
-              <Timer size={13} />
-            </button>
-            <button className={`titlebar-btn${activeView === 'skills' ? ' active' : ''}`} onClick={() => onViewChange('skills')} title={t.titlebar.nav.skills} data-testid="skills-btn">
-              <Code2 size={13} />
-            </button>
-            <button className={`titlebar-btn${activeView === 'history' ? ' active' : ''}`} onClick={() => onViewChange('history')} title={t.titlebar.nav.history}>
-              <Archive size={13} />
-            </button>
-            <button className={`titlebar-btn${activeView === 'settings' ? ' active' : ''}`} onClick={() => onViewChange('settings')} title={t.titlebar.nav.settings}>
-              <Settings size={13} />
-            </button>
+        {/* ── Navegação (à direita) ── */}
+        <button className={`titlebar-btn${activeView === 'chat' ? ' active' : ''}`} onClick={() => onViewChange('chat')} title={t.titlebar.nav.chat} data-testid="chat-btn">
+          <MessageSquare size={13} />
+        </button>
+        <button className={`titlebar-btn${activeView === 'meetings' ? ' active' : ''}`} onClick={() => onViewChange('meetings')} title={t.titlebar.nav.meetings} data-testid="meetings-btn">
+          <Video size={13} />
+        </button>
+        <button className={`titlebar-btn${activeView === 'inbox' ? ' active' : ''}`} onClick={() => onViewChange('inbox')} title={t.titlebar.nav.inbox} data-testid="inbox-btn">
+          <Mail size={13} />
+        </button>
+        <button className={`titlebar-btn${activeView === 'todos' ? ' active' : ''}`} onClick={() => onViewChange('todos')} title="to-dos" data-testid="todos-btn">
+          <ListTodo size={13} />
+        </button>
+        <button className={`titlebar-btn${activeView === 'routines' ? ' active' : ''}`} onClick={() => onViewChange('routines')} title={t.titlebar.nav.routines} data-testid="routines-btn">
+          <Timer size={13} />
+        </button>
+        <button className={`titlebar-btn${activeView === 'skills' ? ' active' : ''}`} onClick={() => onViewChange('skills')} title={t.titlebar.nav.skills} data-testid="skills-btn">
+          <Code2 size={13} />
+        </button>
+        <button className={`titlebar-btn${activeView === 'history' ? ' active' : ''}`} onClick={() => onViewChange('history')} title={t.titlebar.nav.history}>
+          <Archive size={13} />
+        </button>
+        <button className={`titlebar-btn${activeView === 'settings' ? ' active' : ''}`} onClick={() => onViewChange('settings')} title={t.titlebar.nav.settings}>
+          <Settings size={13} />
+        </button>
 
-            {/* ── Activity Console toggle ── */}
-            <div className="titlebar-separator" />
-            <button
-              className={`titlebar-btn titlebar-activity-btn${activityConsoleOpen ? ' active' : ''}`}
-              onClick={onToggleActivityConsole}
-              title={activityConsoleOpen ? t.titlebar.nav.activityConsole.close : t.titlebar.nav.activityConsole.open}
-              data-testid="activity-console-toggle"
-            >
-              <Terminal size={13} />
-            </button>
+        {/* ── Activity Console toggle ── */}
+        <div className="titlebar-separator" />
+        <button
+          className={`titlebar-btn titlebar-activity-btn${activityConsoleOpen ? ' active' : ''}`}
+          onClick={onToggleActivityConsole}
+          title={activityConsoleOpen ? t.titlebar.nav.activityConsole.close : t.titlebar.nav.activityConsole.open}
+          data-testid="activity-console-toggle"
+        >
+          <Terminal size={13} />
+        </button>
       </div>
     </div>
   );

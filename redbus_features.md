@@ -11,10 +11,10 @@ RedBus is a **Local Autonomous Work Assistant** (Agnostic AI Hub) designed to or
 - **Single Database**: Your entire "Soul" (profile), memory, and history are stored in a single encrypted SQLite file (`.redbus`) with WAL mode for maximum performance.
 
 ## 🧠 Elite Autonomous Orchestration
-- **Maestro/Worker Architecture**: Total role flexibility. Use ultra-fast models like **Gemini 2.0 Flash** as the **Maestro** (Light Planner), and direct the raw power of **Claude 4.6 (Sonnet or Opus)** or the newly released **Gemma 4** as the **Worker** (Intelligent Executor).
+- **Maestro/Worker Architecture**: Total role flexibility. Use ultra-fast models like **Gemini 1.5 Flash** or **Llama 3** as the **Maestro** (Light Planner), and direct the raw power of **Claude 3.5 Sonnet** or the latest **Gemma/Qwen** models as the **Worker** (Intelligent Executor).
 - **Living Spec Protocol**: A dynamic execution engine that transforms complex instructions into mutable specifications, allowing the AI to adjust the plan in real-time as results are obtained.
 - **Token Economy**: Drastic reduction in costs and context overhead through surgical updates and intelligent message compression.
-- **Agnostic Orchestration**: Dynamic switching between top-tier providers (**Anthropic**, **Google Gemini**, **OpenAI**) and state-of-the-art local LLMs with **Gemma 4** via **Ollama**, optimizing planning latency and maximizing execution intelligence.
+- **Agnostic Orchestration**: Dynamic switching between top-tier providers (**Anthropic**, **Google Gemini**, **OpenAI**) and state-of-the-art local LLMs (**Gemma, Qwen, Llama, GLM**) via **Ollama**, optimizing planning latency and maximizing execution intelligence.
 
 ## 👁️ Environmental Sensors System
 RedBus doesn't just respond; it **perceives** your workflow through integrated sensors:
@@ -63,6 +63,6 @@ RedBus doesn't just respond; it **perceives** your workflow through integrated s
 - **Runtime**: Electron & Node.js
 - **Frontend**: React + Vite + Vanilla CSS
 - **Database**: SQLite (better-sqlite3)
-- **AI**: Maestro/Worker Orchestration Loop (Gemma 4 & Cloud LLMs support)
+- **AI**: Maestro/Worker Orchestration Loop (Ollama Local & Cloud LLMs support)
 - **Automation**: Playwright & Python Child Processes
 - **Vision/Audio**: Tesseract.js & Transformers.js (Whisper WASM)
