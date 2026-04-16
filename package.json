@@ -1,6 +1,6 @@
 {
   "name": "redbus",
-  "version": "1.0.14",
+  "version": "1.0.15",
   "description": "RedBus - Assistente de Trabalho Autônomo Local",
   "author": {
     "name": "Guile Cardoso",
@@ -12,7 +12,7 @@
     "clean": "rm -rf release dist dist-electron",
     "build": "npm run clean && tsc && vite build && electron-builder",
     "build:mac": "tsc && vite build && electron-builder --mac --x64 --arm64",
-    "build:win": "tsc && vite build && electron-builder --win --x64 --arm64",
+    "build:win": "tsc && vite build && electron-builder --win --x64",
     "build:linux": "tsc && vite build && electron-builder --linux",
     "preview": "vite preview",
     "postinstall": "electron-builder install-app-deps",
@@ -59,15 +59,13 @@
         {
           "target": "nsis",
           "arch": [
-            "x64",
-            "arm64"
+            "x64"
           ]
         },
         {
           "target": "portable",
           "arch": [
-            "x64",
-            "arm64"
+            "x64"
           ]
         }
       ],

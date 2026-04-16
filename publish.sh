@@ -78,7 +78,7 @@ sed -i '' "s/Version [0-9]\{1,\}\.[0-9]\{1,\}\.[0-9]\{1,\}\./Version $VERSION./g
 
 log "Running: npm run build (mac + win + linux)"
 npm run build:mac  && success "macOS build done"
-npm run build:win  && success "Windows (x64 + arm64) build done"
+npm run build:win  && success "Windows (x64) build done"
 npm run build:linux && success "Linux build done"
 
 # ── Step 2: Sync source to public repo ───────────────────────────────────────
