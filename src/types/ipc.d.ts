@@ -176,6 +176,13 @@ export interface RedBusAPI {
   widgetStopRecording: () => Promise<IpcResponse<void>>;
   showMeetingReview: (data: MeetingReviewData) => Promise<IpcResponse<void>>;
 
+  // Window controls (Windows & Linux only)
+  minimizeWindow: () => Promise<IpcResponse<void>>;
+  maximizeWindow: () => Promise<IpcResponse<void>>;
+  closeWindow: () => Promise<IpcResponse<void>>;
+  isWindowMaximized: () => Promise<IpcResponse<boolean>>;
+  getWindowPlatform: () => Promise<IpcResponse<string>>;
+
   // Listeners: recording control (main → renderer)
   onRecordingStart: (callback: () => void) => void;
   onRecordingStop: (callback: () => void) => void;

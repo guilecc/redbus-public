@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from '../../i18n/index.js';
-import { Settings, Archive, ArrowLeft, Code2, Timer, ClipboardCopy, AppWindow, Eye, Layers, Mic, Video, Terminal, Mail, MessageSquare, ListTodo } from 'lucide-react';
+import { Settings, Archive, ArrowLeft, Code2, Timer, ClipboardCopy, AppWindow, Eye, Layers, Mic, Video, Terminal, Mail, MessageSquare, ListTodo, Minus, Square, X, Maximize2 } from 'lucide-react';
 
 type ProactivityLevel = 'OFF' | 'LOW' | 'MEDIUM' | 'HIGH';
 
@@ -31,6 +31,8 @@ export const TitleBar: React.FC<TitleBarProps> = ({ subtitle, activeView, onView
   const [micRecording, setMicRecording] = useState(false);
   const [micMode, setMicMode] = useState<'FULL_CLOUD' | 'HYBRID_LOCAL'>('FULL_CLOUD');
   const [proactivityLevel, setProactivityLevel] = useState<ProactivityLevel>('MEDIUM');
+  const [platform, setPlatform] = useState<string>('win32');
+  const [isMaximized, setIsMaximized] = useState(false);
   useEffect(() => {
     window.redbusAPI.getSensorStatuses().then(res => {
       if (res.status === 'OK' && res.data) {
@@ -52,6 +54,13 @@ export const TitleBar: React.FC<TitleBarProps> = ({ subtitle, activeView, onView
     });
     window.redbusAPI.getProactivityLevel().then(res => {
       if (res.status === 'OK' && res.data) setProactivityLevel(res.data);
+    });
+    // Detect platform and initial maximize state
+    window.redbusAPI.getWindowPlatform().then(res => {
+      if (res.status === 'OK' && res.data) setPlatform(res.data);
+    });
+    window.redbusAPI.isWindowMaximized().then(res => {
+      if (res.status === 'OK') setIsMaximized(!!res.data);
     });
   }, []);
 
@@ -106,11 +115,29 @@ export const TitleBar: React.FC<TitleBarProps> = ({ subtitle, activeView, onView
     await window.redbusAPI.setProactivityLevel(next);
   }, [proactivityLevel]);
 
+  // Window controls — only for Windows & Linux
+  const isMac = platform === 'darwin';
+
+  const handleMinimize = useCallback(() => {
+    window.redbusAPI.minimizeWindow();
+  }, []);
+
+  const handleMaximize = useCallback(async () => {
+    await window.redbusAPI.maximizeWindow();
+    const res = await window.redbusAPI.isWindowMaximized();
+    if (res.status === 'OK') setIsMaximized(!!res.data);
+  }, []);
+
+  const handleClose = useCallback(() => {
+    window.redbusAPI.closeWindow();
+  }, []);
+
   return (
     <div className="titlebar">
-      <div className="titlebar-traffic-pad" />
+      {/* Traffic lights space: macOS only */}
+      {isMac && <div className="titlebar-traffic-pad" />}
 
-      <div className="titlebar-center">
+      <div className={isMac ? 'titlebar-center' : 'titlebar-left'}>
         <span className="titlebar-dot" />
         <span className="titlebar-title">RedBus</span>
         {subtitle && <span className="titlebar-subtitle">{subtitle}</span>}
@@ -214,6 +241,42 @@ export const TitleBar: React.FC<TitleBarProps> = ({ subtitle, activeView, onView
         >
           <Terminal size={13} />
         </button>
+
+        {/* ── Window controls (Windows & Linux only) ── */}
+        {!isMac && (
+          <>
+            <div className="titlebar-separator" />
+            <div className="titlebar-wincontrols">
+              <button
+                className="titlebar-wbtn titlebar-wbtn--minimize"
+                onClick={handleMinimize}
+                title="Minimizar"
+                data-testid="wc-minimize"
+              >
+                <Minus size={11} strokeWidth={2.5} />
+              </button>
+              <button
+                className="titlebar-wbtn titlebar-wbtn--maximize"
+                onClick={handleMaximize}
+                title={isMaximized ? 'Restaurar' : 'Maximizar'}
+                data-testid="wc-maximize"
+              >
+                {isMaximized
+                  ? <Maximize2 size={10} strokeWidth={2.5} />
+                  : <Square size={10} strokeWidth={2.5} />
+                }
+              </button>
+              <button
+                className="titlebar-wbtn titlebar-wbtn--close"
+                onClick={handleClose}
+                title="Fechar"
+                data-testid="wc-close"
+              >
+                <X size={11} strokeWidth={2.5} />
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

@@ -133,11 +133,20 @@ export function initializeDatabase(customPath?: string) {
       name TEXT NOT NULL,
       role TEXT NOT NULL,
       preferences TEXT,
-      system_prompt_compiled TEXT NOT NULL,
+      system_prompt_compiled TEXT NOT NULL DEFAULT '',
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
   `);
+
+  // Migration: add system_prompt_compiled to existing UserProfile tables that pre-date this column
+  try {
+    db.exec(`ALTER TABLE UserProfile ADD COLUMN system_prompt_compiled TEXT NOT NULL DEFAULT '';`);
+  } catch (_) { /* column already exists — ignore */ }
+  // Backfill any NULL values left by old rows
+  try {
+    db.exec(`UPDATE UserProfile SET system_prompt_compiled = '' WHERE system_prompt_compiled IS NULL;`);
+  } catch (_) { }
 
   // Schema 5: ProviderConfigs
   db.exec(`

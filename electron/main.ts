@@ -10,7 +10,7 @@ import { startScheduler } from './services/schedulerService';
 import { initNotificationService } from './services/notificationService';
 import { initSensorManager } from './services/sensorManager';
 import { startProactivityEngine } from './services/proactivityEngine';
-import { initActivityLogger } from './services/activityLogger';
+import { initActivityLogger, logActivity } from './services/activityLogger';
 
 let mainWindow: BrowserWindow | null = null;
 let widgetWindow: BrowserWindow | null = null;
@@ -170,6 +170,34 @@ app.whenReady().then(async () => {
     return { status: 'OK' };
   });
 
+  // ── Window controls (Windows & Linux) ──
+  ipcMain.handle('window:minimize', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.minimize();
+    return { status: 'OK' };
+  });
+
+  ipcMain.handle('window:maximize', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (mainWindow.isMaximized()) mainWindow.unmaximize();
+      else mainWindow.maximize();
+    }
+    return { status: 'OK' };
+  });
+
+  ipcMain.handle('window:close', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.close();
+    return { status: 'OK' };
+  });
+
+  ipcMain.handle('window:is-maximized', () => {
+    const maximized = mainWindow && !mainWindow.isDestroyed() ? mainWindow.isMaximized() : false;
+    return { status: 'OK', data: maximized };
+  });
+
+  ipcMain.handle('window:get-platform', () => {
+    return { status: 'OK', data: process.platform };
+  });
+
   ipcMain.handle('widget:resize', (_e, w: number, h: number) => {
     if (widgetWindow && !widgetWindow.isDestroyed()) {
       const [x, y] = widgetWindow.getPosition();
@@ -214,7 +242,18 @@ app.whenReady().then(async () => {
     initActivityLogger(mainWindow, db);
     initChannelManager(mainWindow, db);
     initBriefingEngine(db, mainWindow);
+
+    // Forward renderer console messages to the ActivityConsole
+    const LEVEL_LABELS = ['verbose', 'info', 'warn', 'error'];
+    mainWindow.webContents.on('console-message', (_e, level, message, line, sourceId) => {
+      // Strip internal Electron/Vite noise
+      const src = sourceId ? sourceId.split('/').pop() ?? '' : '';
+      const prefix = LEVEL_LABELS[level] ? `[${LEVEL_LABELS[level]}]` : '';
+      const location = src ? ` (${src}:${line})` : '';
+      logActivity('console', `${prefix} ${message}${location}`.trim());
+    });
   }
+
   if (mainWindow) initStreamBus(mainWindow);
   setupIpcHandlers(db, mainWindow);
   startScheduler(db, mainWindow);

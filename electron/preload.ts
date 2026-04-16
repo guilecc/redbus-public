@@ -165,6 +165,13 @@ const api: RedBusAPI = {
   openWidget: () => ipcRenderer.invoke('widget:open'),
   closeWidget: () => ipcRenderer.invoke('widget:close'),
   resizeWidget: (w: number, h: number) => ipcRenderer.invoke('widget:resize', w, h),
+
+  // Window controls (Windows & Linux)
+  minimizeWindow: () => ipcRenderer.invoke('window:minimize'),
+  maximizeWindow: () => ipcRenderer.invoke('window:maximize'),
+  closeWindow: () => ipcRenderer.invoke('window:close'),
+  isWindowMaximized: () => ipcRenderer.invoke('window:is-maximized'),
+  getWindowPlatform: () => ipcRenderer.invoke('window:get-platform'),
   widgetStartRecording: () => ipcRenderer.invoke('widget:start-recording'),
   widgetStopRecording: () => ipcRenderer.invoke('widget:stop-recording'),
   showMeetingReview: (data) => ipcRenderer.invoke('meeting:show-review', data),

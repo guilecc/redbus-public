@@ -194,6 +194,7 @@ const ptBR: Translations = {
       history: 'Histórico',
       settings: 'Configurações',
       activityConsole: { open: 'Abrir Activity Console', close: 'Fechar Activity Console' },
+      todos: 'Tarefas',
     },
   },
 

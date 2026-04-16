@@ -16,6 +16,7 @@ import { TodoManager } from './components/Todos/TodoManager';
 import { HistoryView } from './components/History/HistoryView';
 import { useStreamingResponse } from './hooks/useStreamingResponse';
 import { OllamaSettings } from './components/Settings/OllamaSettings';
+import { FlagEmoji } from './components/FlagEmoji';
 import { v4 as uuidv4 } from 'uuid';
 import { Loader2, CheckCircle2, XCircle, BrainCircuit, ShieldCheck, Mic, Zap, Settings, Cloud, ShieldEllipsis, Volume2, Globe } from 'lucide-react';
 
@@ -566,7 +567,7 @@ export default function App() {
               className="lang-option-btn"
               onClick={() => handleChooseLanguage('en')}
             >
-              <span className="lang-flag">🇬🇧</span>
+              <FlagEmoji flag="🇬🇧" size={36} />
               <span className="lang-name">{t.langSetup.en.name}</span>
               <span className="lang-desc">{t.langSetup.en.desc}</span>
             </button>
@@ -575,7 +576,7 @@ export default function App() {
               className="lang-option-btn"
               onClick={() => handleChooseLanguage('pt-BR')}
             >
-              <span className="lang-flag">🇧🇷</span>
+              <FlagEmoji flag="🇧🇷" size={36} />
               <span className="lang-name">{t.langSetup.ptBR.name}</span>
               <span className="lang-desc">{t.langSetup.ptBR.desc}</span>
             </button>

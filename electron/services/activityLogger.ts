@@ -12,7 +12,7 @@ import { v4 as uuidv4 } from 'uuid';
 
 /* ── Tipos ── */
 
-export type ActivityCategory = 'sensors' | 'meetings' | 'routines' | 'proactivity' | 'orchestrator' | 'inbox' | 'todos';
+export type ActivityCategory = 'sensors' | 'meetings' | 'routines' | 'proactivity' | 'orchestrator' | 'inbox' | 'todos' | 'console';
 
 export interface ActivityLogEntry {
   id: string;

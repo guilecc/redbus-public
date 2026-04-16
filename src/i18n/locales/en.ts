@@ -184,6 +184,7 @@ export interface Translations {
       history: string;
       settings: string;
       activityConsole: { open: string; close: string };
+      todos: string;
     };
   };
 
@@ -390,6 +391,7 @@ const en: Translations = {
       history: 'History',
       settings: 'Settings',
       activityConsole: { open: 'Open Activity Console', close: 'Close Activity Console' },
+      todos: 'To-Do Manager',
     },
   },
 
