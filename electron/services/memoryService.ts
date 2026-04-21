@@ -1,4 +1,3 @@
-import { fetchWithTimeout, callOllamaChat } from './llmService';
 import {
   countUncompactedMessages,
   getUncompactedMessages,
@@ -9,6 +8,7 @@ import {
 } from './archiveService';
 import { syncFtsIndex } from './memorySearchService';
 import { v4 as uuidv4 } from 'uuid';
+import { chatWithRole } from './roles';
 
 // ── Configuration ──
 const COMPACTION_THRESHOLD = 20;
@@ -81,62 +81,12 @@ export async function compactHistoryIfNeeded(db: any): Promise<void> {
    ═══════════════════════════════════════════════ */
 
 export async function callWorkerLLM(db: any, systemPrompt: string, userPrompt: string): Promise<string> {
-  const configs = db.prepare('SELECT * FROM ProviderConfigs WHERE id = 1').get();
-  if (!configs) throw new Error('Provider configs not found');
-  const model = configs.workerModel || 'gemini-2.5-flash';
-
-  if (model.includes('gemini')) {
-    if (!configs.googleKey) throw new Error('Google API Key missing');
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${configs.googleKey}`;
-    const r = await fetchWithTimeout(url, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: systemPrompt }] },
-        contents: [{ parts: [{ text: userPrompt }] }],
-      }),
-    });
-    if (!r.ok) throw new Error(`Gemini error: ${await r.text()}`);
-    const d = await r.json();
-    return d.candidates[0].content.parts[0].text.trim();
-  }
-
-  if (model.includes('claude')) {
-    if (!configs.anthropicKey) throw new Error('Anthropic API Key missing');
-    const r = await fetchWithTimeout('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-api-key': configs.anthropicKey, 'anthropic-version': '2023-06-01' },
-      body: JSON.stringify({ model, max_tokens: 2048, system: systemPrompt, messages: [{ role: 'user', content: userPrompt }] }),
-    });
-    if (!r.ok) throw new Error(`Anthropic error: ${await r.text()}`);
-    const d = await r.json();
-    return d.content[0].text.trim();
-  }
-
-  if (model.includes('gpt') || model.includes('o1') || model.includes('o3')) {
-    if (!configs.openAiKey) throw new Error('OpenAI API Key missing');
-    const r = await fetchWithTimeout('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${configs.openAiKey}` },
-      body: JSON.stringify({ model, messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }] }),
-    });
-    if (!r.ok) throw new Error(`OpenAI error: ${await r.text()}`);
-    const d = await r.json();
-    return d.choices[0].message.content.trim();
-  }
-
-  if (model.startsWith('ollama/') || model.startsWith('ollama-cloud/')) {
-    const isCloud = model.startsWith('ollama-cloud/');
-    const targetUrl = isCloud ? (configs.ollamaCloudUrl || 'https://ollama.com') : (configs.ollamaUrl || 'http://localhost:11434');
-    const cleanModel = model.replace('ollama/', '').replace('ollama-cloud/', '');
-    const authHeaders = isCloud && configs.ollamaCloudKey ? { 'Authorization': `Bearer ${configs.ollamaCloudKey}` } : undefined;
-    const d = await callOllamaChat(targetUrl, cleanModel, [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: userPrompt }
-    ], { headers: authHeaders });
-    return (d.choices?.[0]?.message?.content || '').trim();
-  }
-
-  throw new Error(`Unsupported worker model: ${model}`);
+  const result = await chatWithRole(db, 'utility', {
+    systemPrompt,
+    messages: [{ role: 'user', content: userPrompt }],
+    maxTokens: 2048,
+  });
+  return (result.content || '').trim();
 }
 
 /* ═══════════════════════════════════════════════

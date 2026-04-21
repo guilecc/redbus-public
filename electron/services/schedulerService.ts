@@ -1,16 +1,15 @@
+import { v4 as uuidv4 } from 'uuid';
+import { logActivity } from './activityLogger';
+import { saveMessage } from './archiveService';
+import { saveFactFromRoutine } from './memoryService';
+import { notifyRoutineSuccess, notifyRoutineError } from './notificationService';
 import type Database from 'better-sqlite3';
 const cronParser = require('cron-parser');
 import { createHiddenBrowserView } from '../browserManager';
 import { extractDataFromDOM } from './llmService';
 import { BrowserWindow } from 'electron';
-import { executePython } from './pythonExecutor';
 import { synthesizeTaskResponse } from './orchestratorService';
-import { saveMessage } from './archiveService';
-import { readSnippet } from './forgeService';
-import { saveFactFromRoutine } from './memoryService';
-import { notifyRoutineSuccess, notifyRoutineError } from './notificationService';
-import { v4 as uuidv4 } from 'uuid';
-import { logActivity } from './activityLogger';
+import { executeSkillTask } from './workerLoop';
 
 /* ── Backoff schedule (ms) indexed by consecutive error count ── */
 const BACKOFF_SCHEDULE_MS = [
@@ -131,43 +130,124 @@ export function startScheduler(db: ReturnType<typeof Database> | any, mainWindow
         db.prepare('UPDATE LivingSpecs SET last_run = ? WHERE id = ?').run(startedAt, row.id);
 
         try {
-          // ── Skill or Python Script Execution ──
-          if (specBody.skill_name || specBody.python_script) {
-            let scriptCode = specBody.python_script;
-            let vaultKeys = specBody.required_vault_keys || [];
-            const skillArgs = specBody.skill_args || {};
+          // ── Digest Action (FORMAT P — auto-generated digest) ──
+          if (specBody.digest_action) {
+            const today = new Date().toISOString().slice(0, 10);
+            const startOfDay = new Date(`${today}T00:00:00`);
+            const endOfDay = new Date(startOfDay.getTime() + 24 * 3600 * 1000);
+            const since = startOfDay.toISOString();
+            const until = endOfDay.toISOString();
 
-            if (specBody.skill_name) {
-              const skill = readSnippet(db, specBody.skill_name);
-              if (!skill) throw new Error(`Skill "${specBody.skill_name}" not found`);
-              scriptCode = skill.code;
-              vaultKeys = JSON.parse(skill.required_vault_keys || '[]');
+            try {
+              const { fetchMessagesInRange } = await import('./graph/graphMailService');
+              const { fetchChatMessagesInRange } = await import('./graph/graphTeamsService');
+              await Promise.allSettled([fetchMessagesInRange(db, since, until), fetchChatMessagesInRange(db, since, until)]);
+            } catch { /* best-effort */ }
+
+            const { listCommunications, getCommunicationsByIds } = await import('./communicationsStore');
+            const { generateDigestFromMessages, saveDigest, cleanPreview, curateDigestMessages, DEFAULT_DIGEST_CURATION } = await import('./digestService');
+            const { getAppSetting } = await import('../database');
+            const { callRoleRaw } = await import('./llmService');
+            const { resolveRole, SetupRequiredError } = await import('./roles');
+
+            let allItems = listCommunications(db, { since, until, limit: 5000 });
+            const fPreset: string | null = specBody.filter_preset_name || null;
+            if (fPreset) {
+              const presetsRaw = getAppSetting(db, 'comms.filter_presets');
+              const presets: any[] = presetsRaw ? JSON.parse(presetsRaw) : [];
+              const preset = presets.find((p: any) => p.name === fPreset || p.id === fPreset);
+              if (preset) {
+                const bl = (preset.blacklist || []).map((s: string) => s.toLowerCase().trim());
+                const wl = (preset.whitelist || []).map((s: string) => s.toLowerCase().trim());
+                const src = preset.sources || { outlook: true, teams: true };
+                allItems = allItems.filter(item => {
+                  if (!src[item.source]) return false;
+                  if (preset.unreadOnly && !item.isUnread) return false;
+                  const st = `${item.sender || ''} ${item.senderEmail || ''} ${item.channelOrChatName || ''}`.toLowerCase();
+                  if (wl.length > 0 && !wl.some((w: string) => st.includes(w))) return false;
+                  if (bl.length > 0 && bl.some((b: string) => st.includes(b))) return false;
+                  return true;
+                });
+              }
             }
 
-            const pyResult = await executePython(db, scriptCode, vaultKeys, skillArgs);
+            if (allItems.length === 0) {
+              const endedAt = new Date().toISOString();
+              const durationMs = Date.now() - startMs;
+              recordExecution(db, row.id, startedAt, endedAt, 'skipped', undefined, 'Sem mensagens para o dia', durationMs);
+              db.prepare('UPDATE LivingSpecs SET last_duration_ms = ?, next_run_at = ? WHERE id = ?')
+                .run(durationMs, computeNextRun(row.cron_expression, row.timezone), row.id);
+              notifyRoutineSuccess(goal, 'Sem mensagens para gerar digest hoje.');
+            } else {
+              const curationRaw = getAppSetting(db, 'comms.digest.curation');
+              let curationCfg = DEFAULT_DIGEST_CURATION;
+              if (curationRaw) { try { curationCfg = { ...DEFAULT_DIGEST_CURATION, ...JSON.parse(curationRaw) }; } catch { } }
+              const rawItems = getCommunicationsByIds(db, allItems.map(i => i.id));
+              const curated = curateDigestMessages(rawItems, curationCfg);
+              const messages = curated.map(i => ({
+                channel: i.source, sender: i.sender, subject: i.subject,
+                preview: cleanPreview(i.plainText || '', i.source),
+                timestamp: i.timestamp, isUnread: i.isUnread,
+                importance: i.importance, mentionsMe: i.mentionsMe,
+              }));
+              const resolveDigestRole = () => {
+                for (const c of ['digest', 'utility', 'executor'] as const) {
+                  try { resolveRole(db, c); return c; } catch (e) { if (!(e instanceof SetupRequiredError)) throw e; }
+                }
+                throw new SetupRequiredError('digest');
+              };
+              const role = resolveDigestRole();
+              const callLLM = async (prompt: string) => callRoleRaw(db, role, 'Você é um assistente executivo. Retorne APENAS JSON válido sem markdown.', prompt);
+              let userContext: any;
+              try {
+                const profileRow = db.prepare(`SELECT professional_name, professional_email, professional_aliases FROM UserProfile WHERE id = 'default'`).get() as any;
+                const aliases = profileRow?.professional_aliases ? JSON.parse(profileRow.professional_aliases) : [];
+                if (profileRow?.professional_name || profileRow?.professional_email || aliases.length > 0) {
+                  userContext = { professional_name: profileRow?.professional_name, professional_email: profileRow?.professional_email, professional_aliases: aliases };
+                }
+              } catch { }
+              const summary = await generateDigestFromMessages(messages, callLLM, userContext);
+              db.prepare('DELETE FROM CommunicationDigest WHERE digest_date = ?').run(today);
+              const digestId = saveDigest(db, today, 'all', summary, messages);
+              const endedAt = new Date().toISOString();
+              const durationMs = Date.now() - startMs;
+              const replyText = `[cron: ${goal}] Digest de ${today} gerado: ${summary.total_messages} mensagens, ${summary.topics?.length || 0} tópicos.`;
+              const replyId = uuidv4();
+              saveMessage(db, { id: replyId, role: 'assistant', content: replyText });
+              mainWindow.webContents.send('worker:step-updated', { specId: row.id, stepIndex: 0, status: 'completed', data: JSON.stringify({ date: today, digestId }), conversationalReply: replyText, replyId });
+              mainWindow.webContents.send('digest:complete', { date: today, id: digestId, summary });
+              db.prepare('UPDATE LivingSpecs SET consecutive_errors = 0, last_error = NULL, last_duration_ms = ?, next_run_at = ? WHERE id = ?')
+                .run(durationMs, computeNextRun(row.cron_expression, row.timezone), row.id);
+              recordExecution(db, row.id, startedAt, endedAt, 'ok', undefined, replyText.slice(0, 200), durationMs);
+              if (replyText) saveFactFromRoutine(db, goal, replyText.slice(0, 200));
+              notifyRoutineSuccess(goal, replyText.slice(0, 100));
+            }
+          }
+          // ── Skill Task Execution (ReAct via exec/read_file) ──
+          else if (specBody.use_skill || specBody.task) {
+            const task: string = specBody.task || specBody.goal || '';
+            const skillName: string | undefined = specBody.use_skill || undefined;
+
+            const result = await executeSkillTask(db, { task, skillName }, mainWindow);
+            const rendered = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
             const endedAt = new Date().toISOString();
             const durationMs = Date.now() - startMs;
 
-            if (pyResult.exitCode === 0 && pyResult.stdout.trim()) {
-              const reply = await synthesizeTaskResponse(db, goal, pyResult.stdout);
-              const replyId = uuidv4();
-              saveMessage(db, { id: replyId, role: 'assistant', content: `[cron: ${goal}] ${reply}` });
-              mainWindow.webContents.send('worker:step-updated', {
-                specId: row.id, stepIndex: 0, status: 'completed',
-                data: pyResult.stdout, conversationalReply: `[cron: ${goal}] ${reply}`, replyId,
-              });
-              // Success: reset errors, record execution
-              db.prepare(`
-                UPDATE LivingSpecs SET consecutive_errors = 0, last_error = NULL, last_duration_ms = ?, next_run_at = ?
-                WHERE id = ?
-              `).run(durationMs, computeNextRun(row.cron_expression, row.timezone), row.id);
-              recordExecution(db, row.id, startedAt, endedAt, 'ok', undefined, reply?.slice(0, 200), durationMs);
-              if (reply) saveFactFromRoutine(db, goal, reply.slice(0, 200));
+            const reply = await synthesizeTaskResponse(db, goal, rendered);
+            const replyId = uuidv4();
+            saveMessage(db, { id: replyId, role: 'assistant', content: `[cron: ${goal}] ${reply}` });
+            mainWindow.webContents.send('worker:step-updated', {
+              specId: row.id, stepIndex: 0, status: 'completed',
+              data: rendered, conversationalReply: `[cron: ${goal}] ${reply}`, replyId,
+            });
+            db.prepare(`
+              UPDATE LivingSpecs SET consecutive_errors = 0, last_error = NULL, last_duration_ms = ?, next_run_at = ?
+              WHERE id = ?
+            `).run(durationMs, computeNextRun(row.cron_expression, row.timezone), row.id);
+            recordExecution(db, row.id, startedAt, endedAt, 'ok', undefined, reply?.slice(0, 200), durationMs);
+            if (reply) saveFactFromRoutine(db, goal, reply.slice(0, 200));
 
-              notifyRoutineSuccess(goal, reply?.slice(0, 100));
-            } else {
-              throw new Error(pyResult.stderr || 'Python script returned non-zero exit code');
-            }
+            notifyRoutineSuccess(goal, reply?.slice(0, 100));
           }
           // ── Browser Automation ──
           else if (specBody.steps && specBody.steps.length > 0) {
@@ -238,39 +318,28 @@ export async function runRoutineNow(
   db.prepare('UPDATE LivingSpecs SET last_run = ? WHERE id = ?').run(startedAt, row.id);
 
   try {
-    if (specBody.skill_name || specBody.python_script) {
-      let scriptCode = specBody.python_script;
-      let vaultKeys = specBody.required_vault_keys || [];
-      const skillArgs = specBody.skill_args || {};
+    if (specBody.use_skill || specBody.task) {
+      const task: string = specBody.task || specBody.goal || '';
+      const skillName: string | undefined = specBody.use_skill || undefined;
 
-      if (specBody.skill_name) {
-        const skill = readSnippet(db, specBody.skill_name);
-        if (!skill) throw new Error(`Skill "${specBody.skill_name}" not found`);
-        scriptCode = skill.code;
-        vaultKeys = JSON.parse(skill.required_vault_keys || '[]');
-      }
-
-      const pyResult = await executePython(db, scriptCode, vaultKeys, skillArgs);
+      const result = await executeSkillTask(db, { task, skillName }, mainWindow);
+      const rendered = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
       const endedAt = new Date().toISOString();
       const durationMs = Date.now() - startMs;
 
-      if (pyResult.exitCode === 0 && pyResult.stdout.trim()) {
-        const reply = await synthesizeTaskResponse(db, goal, pyResult.stdout);
-        const replyId = uuidv4();
-        saveMessage(db, { id: replyId, role: 'assistant', content: `[manual: ${goal}] ${reply}` });
-        mainWindow.webContents.send('worker:step-updated', {
-          specId: row.id, stepIndex: 0, status: 'completed',
-          data: pyResult.stdout, conversationalReply: `[manual: ${goal}] ${reply}`, replyId,
-        });
-        db.prepare(`
-          UPDATE LivingSpecs SET consecutive_errors = 0, last_error = NULL, last_duration_ms = ?, next_run_at = ?
-          WHERE id = ?
-        `).run(durationMs, row.cron_expression ? computeNextRun(row.cron_expression, row.timezone) : null, row.id);
-        recordExecution(db, row.id, startedAt, endedAt, 'ok', undefined, reply?.slice(0, 200), durationMs);
-        return { status: 'ok', summary: reply?.slice(0, 200) };
-      } else {
-        throw new Error(pyResult.stderr || 'Non-zero exit code');
-      }
+      const reply = await synthesizeTaskResponse(db, goal, rendered);
+      const replyId = uuidv4();
+      saveMessage(db, { id: replyId, role: 'assistant', content: `[manual: ${goal}] ${reply}` });
+      mainWindow.webContents.send('worker:step-updated', {
+        specId: row.id, stepIndex: 0, status: 'completed',
+        data: rendered, conversationalReply: `[manual: ${goal}] ${reply}`, replyId,
+      });
+      db.prepare(`
+        UPDATE LivingSpecs SET consecutive_errors = 0, last_error = NULL, last_duration_ms = ?, next_run_at = ?
+        WHERE id = ?
+      `).run(durationMs, row.cron_expression ? computeNextRun(row.cron_expression, row.timezone) : null, row.id);
+      recordExecution(db, row.id, startedAt, endedAt, 'ok', undefined, reply?.slice(0, 200), durationMs);
+      return { status: 'ok', summary: reply?.slice(0, 200) };
     }
 
     if (specBody.steps && specBody.steps.length > 0) {

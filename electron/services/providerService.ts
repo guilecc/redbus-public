@@ -1,74 +1,22 @@
-export interface ModelOption {
-  id: string;
-  name: string;
-}
+/**
+ * Thin facade — delegates model discovery to the matching ProviderPlugin.
+ * Provider-specific endpoints and filters live in `electron/plugins/providers/*`.
+ */
+import { getProvider, loadBuiltins } from '../plugins/registry';
+import type { ModelOption } from '../plugins/types';
 
-export async function fetchAvailableModels(provider: 'openai' | 'anthropic' | 'google' | 'ollama-cloud', apiKey: string, customUrl?: string): Promise<ModelOption[]> {
+loadBuiltins();
+
+export type { ModelOption };
+
+export async function fetchAvailableModels(
+  provider: string,
+  apiKey: string,
+  customUrl?: string
+): Promise<ModelOption[]> {
   if (!apiKey) throw new Error('API Key is required to fetch models');
-
-  if (provider === 'openai' || provider === 'ollama-cloud') {
-    const baseUrl = provider === 'openai' ? 'https://api.openai.com/v1/models' : (customUrl ? `${customUrl}/v1/models` : 'https://ollama.com/v1/models');
-    const response = await fetch(baseUrl, {
-      headers: { 'Authorization': `Bearer ${apiKey}` }
-    });
-    
-    if (!response.ok) throw new Error(`${provider === 'openai' ? 'OpenAI' : 'Ollama Cloud'} API Error: ${await response.text()}`);
-    const data = await response.json();
-    
-    // For OpenAI we filter, for Ollama Cloud we might want all available or also filter
-    const list = data.data || [];
-    const models = (provider === 'openai')
-      ? list.filter((m: any) => m.id.includes('gpt') || m.id.includes('o1') || m.id.includes('o3'))
-      : list;
-
-    return models.map((m: any) => ({
-        id: m.id,
-        name: m.id
-      }))
-      .sort((a: ModelOption, b: ModelOption) => b.id.localeCompare(a.id));
-  }
-
-  if (provider === 'anthropic') {
-    // ... rest unchanged
-    const response = await fetch('https://api.anthropic.com/v1/models', {
-      headers: {
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01'
-      }
-    });
-
-    if (!response.ok) {
-      if (response.status === 401 || response.status === 403) throw new Error('Chave de API inválida ou sem permissão');
-      throw new Error(`Anthropic API Error: ${await response.text()}`);
-    }
-    const data = await response.json();
-    
-    return data.data
-      .filter((m: any) => m.type === 'model' && m.id.includes('claude'))
-      .map((m: any) => ({
-        id: m.id,
-        name: m.display_name || m.id
-      }));
-  }
-
-  if (provider === 'google') {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`;
-    const response = await fetch(url);
-    
-    if (!response.ok) {
-      if (response.status === 400 || response.status === 403) throw new Error('Chave de API inválida ou sem permissão');
-      throw new Error(`Google API Error: ${await response.text()}`);
-    }
-    const data = await response.json();
-    
-    return data.models
-      .filter((m: any) => m.name.includes('gemini'))
-      .map((m: any) => ({
-        id: m.name.replace('models/', ''),
-        name: m.displayName || m.name.replace('models/', '')
-      }))
-      .sort((a: ModelOption, b: ModelOption) => b.id.localeCompare(a.id));
-  }
-
-  throw new Error(`Unknown provider: ${provider}`);
+  const plugin = getProvider(provider);
+  if (!plugin) throw new Error(`Unknown provider: ${provider}`);
+  return plugin.listModels(apiKey, customUrl);
 }
+

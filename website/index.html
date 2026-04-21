@@ -42,7 +42,7 @@
                     <i data-lucide="download"></i>
                     <span data-i18n="download_btn">Download Latest Release</span>
                 </a>
-                <p class="download-note" data-i18n="download_note" style="margin-top: 1.5rem;">Version 1.0.15. Free
+                <p class="download-note" data-i18n="download_note" style="margin-top: 1.5rem;">Version 1.5.0. Free
                     forever.</p>
             </div>
         </div>
@@ -85,26 +85,84 @@
             <div class="card">
                 <div class="card-icon"><i data-lucide="wrench"></i></div>
                 <h3 data-i18n="feat_auto_title">Professional Automation</h3>
-                <p data-i18n="feat_auto_desc">Execute python scripts with Skill Forge or automate web tasks with
-                    Playwright. A powerful toolbox for complex engineering tasks.</p>
+                <p data-i18n="feat_auto_desc">Skills packaged as markdown + scripts run in a sandboxed executor.
+                    Automate web flows with Playwright. A powerful toolbox for complex engineering tasks.</p>
             </div>
         </div>
     </section>
 
     <section id="intelligence" class="section alt-bg">
         <h2 data-i18n="section_intelligence_title">Intelligent Orchestration Core</h2>
-        <p class="section-desc" data-i18n="section_intelligence_desc">The engine behind RedBus logic. Agnostic,
-            autonomous, and powerful.</p>
-        <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));">
+        <p class="section-desc" data-i18n="section_intelligence_desc">The engine behind RedBus logic. Plugin-first,
+            role-based, observable.</p>
+        <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));">
             <div class="card">
-                <div class="card-icon"><i data-lucide="cpu"></i></div>
-                <h3 data-i18n="feat_orch_title">Maestro/Worker Orchestration</h3>
-                <p data-i18n="feat_orch_desc">Dynamic hybrid routing. Use light local models or affordable cloud APIs for planning (Maestro), and direct heavy execution to powerful local instances (Gemma, Qwen, Llama) or frontier cloud models (Worker).</p>
+                <div class="card-icon"><i data-lucide="users"></i></div>
+                <h3 data-i18n="feat_roles_title">Role-Based Orchestration</h3>
+                <p data-i18n="feat_roles_desc">Four named roles — Planner, Executor, Synthesizer, Utility — each bound
+                    to an independent model and thinking budget. Configure one model for everything, or tune each role
+                    separately.</p>
             </div>
             <div class="card">
                 <div class="card-icon"><i data-lucide="layers"></i></div>
                 <h3 data-i18n="feat_llm_title">Elite Model Support</h3>
-                <p data-i18n="feat_llm_desc">Total Agnostic Power. Run high-density local models via Ollama (Gemma, Llama, Qwen, GLM) with zero friction, or leverage Anthropic, Google, and OpenAI for global-scale intelligence.</p>
+                <p data-i18n="feat_llm_desc">Totally agnostic. Run high-density local models via Ollama (Gemma, Llama,
+                    Qwen, GLM) with zero friction, or leverage Anthropic, Google and OpenAI for frontier-scale
+                    intelligence.</p>
+            </div>
+            <div class="card">
+                <div class="card-icon"><i data-lucide="blocks"></i></div>
+                <h3 data-i18n="feat_plugins_title">Plugin-First Architecture</h3>
+                <p data-i18n="feat_plugins_desc">Providers, tools and lifecycle hooks live in a typed plugin registry.
+                    Adding a new provider or tool is one file — no branches scattered across the core.</p>
+            </div>
+            <div class="card">
+                <div class="card-icon"><i data-lucide="book-open"></i></div>
+                <h3 data-i18n="feat_skills_title">Skills System</h3>
+                <p data-i18n="feat_skills_desc">Markdown skill packages (<code>SKILL.md</code> + scripts + assets) drop
+                    into <code>~/.redbus/skills/</code> and become tools the agent can discover, read and execute on
+                    demand.</p>
+            </div>
+            <div class="card">
+                <div class="card-icon"><i data-lucide="brain-circuit"></i></div>
+                <h3 data-i18n="feat_thinking_title">Live Reasoning</h3>
+                <p data-i18n="feat_thinking_desc">Watch the model think in real-time. A unified thinking level (off →
+                    minimal → low → medium → high → xhigh) is translated per-provider, so Claude, Gemini, GPT and Ollama
+                    all stream reasoning through the same UI.</p>
+            </div>
+            <div class="card">
+                <div class="card-icon"><i data-lucide="workflow"></i></div>
+                <h3 data-i18n="feat_runner_title">Unified Agent Runner</h3>
+                <p data-i18n="feat_runner_desc">Every task — chat, browser, skill, extraction — runs through one
+                    abortable engine. Stop any run in under a second, auto-detect tool loops, and delegate subtasks
+                    through opt-in subagents with depth limits.</p>
+            </div>
+        </div>
+    </section>
+
+    <section id="extraction" class="section">
+        <h2 data-i18n="section_extraction_title">Hybrid Data Extraction</h2>
+        <p class="section-desc" data-i18n="section_extraction_desc">Fast, deterministic scrapers for known apps. Agentic
+            LLM navigation as a graceful fallback.</p>
+        <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));">
+            <div class="card">
+                <div class="card-icon"><i data-lucide="gauge"></i></div>
+                <h3 data-i18n="feat_static_title">Deterministic Scrapers</h3>
+                <p data-i18n="feat_static_desc">Outlook Web and Microsoft Teams are parsed via Playwright locators with
+                    externalized selectors — near-zero token cost, seconds instead of minutes per digest run.</p>
+            </div>
+            <div class="card">
+                <div class="card-icon"><i data-lucide="route"></i></div>
+                <h3 data-i18n="feat_fallback_title">Self-Healing Fallback</h3>
+                <p data-i18n="feat_fallback_desc">When a selector goes stale the channel transparently routes to the
+                    agentic LLM extractor, so data keeps flowing while you update the static config.</p>
+            </div>
+            <div class="card">
+                <div class="card-icon"><i data-lucide="sparkles"></i></div>
+                <h3 data-i18n="feat_onboarding_title">Guided Onboarding</h3>
+                <p data-i18n="feat_onboarding_desc">A first-run wizard discovers models in real-time, suggests role
+                    bindings from live catalogs, and handles Ollama pulls with progress. A "redo setup" switch brings
+                    the wizard back without losing chats or memory.</p>
             </div>
         </div>
     </section>
@@ -164,7 +222,8 @@
                 <i data-lucide="alert-triangle"></i>
                 <div class="alert-content">
                     <h4 data-i18n="trouble_mac_title">macOS "App is damaged" message</h4>
-                    <p data-i18n="trouble_mac_desc">If you see a message saying RedBus is damaged, it's actually Gatekeeper blocking the unsigned app. Run this in your Terminal to fix:</p>
+                    <p data-i18n="trouble_mac_desc">If you see a message saying RedBus is damaged, it's actually
+                        Gatekeeper blocking the unsigned app. Run this in your Terminal to fix:</p>
                     <code>sudo xattr -cr /Applications/RedBus.app</code>
                 </div>
             </div>

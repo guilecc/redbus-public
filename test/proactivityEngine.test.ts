@@ -55,7 +55,7 @@ describe('ProactivityEngine', () => {
     vi.useFakeTimers();
     db = initializeDatabase(':memory:');
     // Insert a test API key so the cognitive filter can run
-    db.prepare("UPDATE ProviderConfigs SET googleKey = 'test-key-123' WHERE id = 1").run();
+    db.prepare("UPDATE ProviderConfigs SET googleKey = 'test-key-123', roles = '{\"utility\":{\"model\":\"google/gemini-2.5-flash\"}}' WHERE id = 1").run();
     setAgentState('IDLE');
     _resetEngine();
     mockEnvCtx.clipboardText = null;

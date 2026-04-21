@@ -8,13 +8,13 @@ describe('Chat UI Components', () => {
     const onSend = vi.fn();
     render(<ChatInput onSend={onSend} />);
     
-    const textarea = screen.getByPlaceholderText(/digite seu comando/i);
-    const button = screen.getByRole('button');
+    const textarea = screen.getByPlaceholderText(/run a task/i);
+    const button = screen.getAllByRole('button').find(b => b.classList.contains('send-button'))!;
     
     fireEvent.change(textarea, { target: { value: 'Test message' } });
     fireEvent.click(button);
     
-    expect(onSend).toHaveBeenCalledWith('Test message');
+    expect(onSend).toHaveBeenCalledWith('Test message', undefined);
     expect(textarea).toHaveValue('');
   });
 

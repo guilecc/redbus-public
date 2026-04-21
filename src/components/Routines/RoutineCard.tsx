@@ -15,7 +15,7 @@ interface RoutineEntry {
   last_duration_ms: number | null;
   timezone: string;
   skill_name: string | null;
-  python_script: boolean;
+  skill_task: boolean;
   steps: Array<{ url: string; instruction: string }>;
 }
 
@@ -127,7 +127,7 @@ export const RoutineCard: React.FC<RoutineCardProps> = ({
       </div>
 
       {/* Pipeline visualization */}
-      <RoutinePipeline skillName={routine.skill_name} pythonScript={routine.python_script} steps={routine.steps} />
+      <RoutinePipeline skillName={routine.skill_name} skillTask={routine.skill_task} steps={routine.steps} />
 
       {/* Action buttons */}
       <div style={{ display: 'flex', gap: '6px', marginTop: '10px', flexWrap: 'wrap' }}>

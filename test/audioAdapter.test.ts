@@ -1,9 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
-import * as llmService from '../electron/services/llmService';
+import * as http from '../electron/plugins/http';
 import { analyzeTranscriptFromText } from '../electron/services/audioAdapterService';
 
-// Mock fetchWithTimeout
-vi.mock('../electron/services/llmService', () => ({
+// Mock the low-level HTTP helper used by the provider plugins
+vi.mock('../electron/plugins/http', () => ({
   fetchWithTimeout: vi.fn(),
 }));
 
@@ -32,15 +32,21 @@ describe('AudioAdapterService - Analyze Transcript', () => {
       }]
     };
 
-    vi.mocked(llmService.fetchWithTimeout).mockResolvedValueOnce({
+    vi.mocked(http.fetchWithTimeout).mockResolvedValueOnce({
       ok: true,
       json: async () => mockedResponse
     } as any);
 
-    const result = await analyzeTranscriptFromText('Alice: Hello. Bob: Hi.', {
-      openAiKey: 'fake-key',
-      workerModel: 'gpt-4o-mini'
-    });
+    const mockDb = {
+      prepare: vi.fn().mockReturnValue({
+        get: vi.fn().mockReturnValue({
+          roles: JSON.stringify({ utility: { model: 'gpt-4o-mini', thinkingLevel: 'off' } }),
+          openAiKey: 'fake-key',
+        }),
+      }),
+    };
+
+    const result = await analyzeTranscriptFromText(mockDb, 'Alice: Hello. Bob: Hi.');
 
     expect(result.executive_summary).toBe("Discussed the new UI.");
     expect(result.speakers).toContain("Alice");

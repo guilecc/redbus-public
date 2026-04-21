@@ -23,7 +23,7 @@ describe('IPC Handlers Communication', () => {
   beforeEach(() => {
     // Inicializamos DB na memória para isolar do disco
     db = initializeDatabase(':memory:');
-    
+
     // interceptamos a injeção do mock de handles pra testá-los
     mockIpcMain.handle.mockImplementation((channel, callback) => {
       registeredHandlers[channel] = callback;
@@ -52,8 +52,8 @@ describe('IPC Handlers Communication', () => {
     const result = await handler({});
     expect(result.status).toBe('OK');
     expect(result.data).toBeDefined();
-    // Checa valores defaults
-    expect(result.data.maestroModel).toBe('claude-3-7-sonnet-20250219');
+    // Checa defaults do `roles` JSON (Spec 06) — agora um objeto vazio por default
+    expect(result.data.roles).toEqual({});
     expect(result.data.id).toBe(1);
   });
 
@@ -64,8 +64,12 @@ describe('IPC Handlers Communication', () => {
     const mockPayload = {
       openAiKey: 'sk-proj-test123',
       anthropicKey: 'sk-ant-test123',
-      maestroModel: 'o1-preview',
-      workerModel: 'gpt-4o-mini'
+      roles: {
+        planner: { model: 'o1-preview', thinkingLevel: 'medium' },
+        executor: { model: 'gpt-4o-mini', thinkingLevel: 'off' },
+        synthesizer: { model: 'gpt-4o-mini', thinkingLevel: 'off' },
+        utility: { model: 'gpt-4o-mini', thinkingLevel: 'off' },
+      },
     };
 
     // chamamos o IPC simulando o preload
@@ -77,22 +81,22 @@ describe('IPC Handlers Communication', () => {
     expect(getResponse.data.openAiKey).toBe('sk-proj-test123');
     expect(getResponse.data.anthropicKey).toBe('sk-ant-test123');
     expect(getResponse.data.googleKey).toBeNull(); // Not updated, remains default NULL
-    expect(getResponse.data.maestroModel).toBe('o1-preview');
-    expect(getResponse.data.workerModel).toBe('gpt-4o-mini');
+    expect(getResponse.data.roles.planner.model).toBe('o1-preview');
+    expect(getResponse.data.roles.executor.model).toBe('gpt-4o-mini');
   });
 
   it('4. saveProviderConfig (unitário) deve atualizar apenas a chave do provider requisitado', async () => {
     const handlerSaveProvider = registeredHandlers['settings:save-provider'];
     const handlerGet = registeredHandlers['settings:get'];
 
-    // Chama o endpoint de "salvar unitário"
+    // Chama o endpoint de "salvar unitário" (defaultModel atualiza apenas a role `planner`)
     const saveResponse = await handlerSaveProvider({}, 'openai', 'sk-single-test', 'gpt-4o');
     expect(saveResponse.status).toBe('OK');
 
     // Valida no banco
     const getResponse = await handlerGet({});
     expect(getResponse.data.openAiKey).toBe('sk-single-test');
-    expect(getResponse.data.maestroModel).toBe('gpt-4o');
+    expect(getResponse.data.roles.planner.model).toBe('gpt-4o');
     // Deve manter dados originais/NULL nas outras
     expect(getResponse.data.anthropicKey).toBeNull();
   });

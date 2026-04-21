@@ -1,22 +1,10 @@
 /**
- * PlaywrightService — Headless Chromium for channel data extraction.
- * Reuses Electron session cookies. Runs in Main process.
+ * PlaywrightService — Headless Chromium for general browser automation.
+ * Runs in Main process and exposes aria-snapshot-based locator tools.
  */
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright-core';
-import { session } from 'electron';
-import type { ChannelId } from './extractors/types';
 
 let _browser: Browser | null = null;
-const _contexts = new Map<ChannelId, BrowserContext>();
-
-const CHANNEL_URLS: Record<ChannelId, string> = {
-  outlook: 'https://outlook.office365.com/mail/',
-  teams: 'https://teams.cloud.microsoft/',
-};
-const PARTITION_NAMES: Record<ChannelId, string> = {
-  outlook: 'persist:m365', teams: 'persist:m365',
-};
-const LOGIN_PATTERNS = ['login.microsoftonline.com', 'login.live.com', 'login.microsoft.com'];
 
 function _getChromiumPath(): string {
   const pw = require('playwright-core');
@@ -29,108 +17,9 @@ async function _ensureBrowser(): Promise<Browser> {
     headless: true, executablePath: _getChromiumPath(),
     args: ['--disable-gpu', '--disable-dev-shm-usage', '--no-sandbox'],
   });
-  _browser.on('disconnected', () => { _browser = null; _contexts.clear(); });
+  _browser.on('disconnected', () => { _browser = null; });
   return _browser;
 }
-
-async function _exportElectronCookies(channelId: ChannelId) {
-  const ses = session.fromPartition(PARTITION_NAMES[channelId]);
-  const cookies = await ses.cookies.get({});
-  return cookies.map(c => ({
-    name: c.name, value: c.value, domain: c.domain || '', path: c.path || '/',
-    httpOnly: c.httpOnly || false, secure: c.secure || false,
-    sameSite: (c.sameSite === 'no_restriction' ? 'None' : c.sameSite === 'lax' ? 'Lax' : 'Lax') as 'Strict' | 'Lax' | 'None',
-    expires: c.expirationDate || -1,
-  }));
-}
-
-/**
- * Get or create a BrowserContext for a channel.
- * Reuses existing context. Call _refreshContext to force cookie re-import.
- */
-async function _createContext(channelId: ChannelId): Promise<BrowserContext> {
-  const existing = _contexts.get(channelId);
-  if (existing) return existing;
-  return _refreshContext(channelId);
-}
-
-/** Force-create a fresh context with latest Electron cookies */
-async function _refreshContext(channelId: ChannelId): Promise<BrowserContext> {
-  const browser = await _ensureBrowser();
-  const old = _contexts.get(channelId);
-  if (old) { try { await old.close(); } catch { } }
-  const ctx = await browser.newContext({
-    userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
-    viewport: { width: 1280, height: 800 }, locale: 'pt-BR',
-    timezoneId: Intl.DateTimeFormat().resolvedOptions().timeZone,
-  });
-  const cookies = await _exportElectronCookies(channelId);
-  if (cookies.length > 0) await ctx.addCookies(cookies);
-  _contexts.set(channelId, ctx);
-  console.log(`[Playwright] Created context for ${channelId} (${cookies.length} cookies)`);
-  return ctx;
-}
-
-export async function checkSessionValid(channelId: ChannelId): Promise<boolean> {
-  try {
-    // Always refresh context to get latest cookies from Electron
-    const ctx = await _refreshContext(channelId);
-    const page = await ctx.newPage();
-    const url = CHANNEL_URLS[channelId];
-    console.log(`[Playwright] checkSession ${channelId}: loading ${url}`);
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 25000 });
-
-    // Wait for SPA redirects to settle (Outlook does client-side redirects)
-    await page.waitForTimeout(4000);
-
-    const finalUrl = page.url();
-    console.log(`[Playwright] checkSession ${channelId}: final URL = ${finalUrl}`);
-
-    // Check URL first
-    const matchedLoginPattern = LOGIN_PATTERNS.find(p => finalUrl.includes(p));
-    if (matchedLoginPattern) {
-      console.log(`[Playwright] checkSession ${channelId}: ❌ on login page (matches pattern: ${matchedLoginPattern})`);
-      await page.close();
-      return false;
-    }
-
-    // Also check page content — look for signs of a logged-in state
-    const bodyText = await page.evaluate(() => document.body?.innerText?.substring(0, 2000) || '');
-    await page.close();
-
-    // If the page shows "browser not supported" or is mostly empty, session might be invalid
-    const loginIndicators = ['sign in', 'entrar', 'iniciar sessão', 'password', 'senha', 'versão do seu navegador não'];
-    const isLoginContent = loginIndicators.some(t => bodyText.toLowerCase().includes(t));
-
-    console.log(`[Playwright] checkSession ${channelId}: content snapshot (first 100 chars): ${bodyText.substring(0, 100).replace(/\n/g, ' ')}`);
-
-    if (isLoginContent && bodyText.length < 500) {
-      console.log(`[Playwright] checkSession ${channelId}: ❌ login/error content detected`);
-      return false;
-    }
-
-    console.log(`[Playwright] checkSession ${channelId}: ✅ valid (${bodyText.length} chars of content)`);
-    return true;
-  } catch (err) {
-    console.warn(`[Playwright] checkSession ${channelId}: error:`, err);
-    return false;
-  }
-}
-
-export async function shutdownPlaywright(): Promise<void> {
-  await browseCloseAll();
-  for (const [, ctx] of _contexts) { try { await ctx.close(); } catch { } }
-  _contexts.clear();
-  if (_browser) { try { await _browser.close(); } catch { } _browser = null; }
-}
-
-export async function suspendPlaywright(): Promise<void> {
-  for (const [, ctx] of _contexts) { try { await ctx.close(); } catch { } }
-  _contexts.clear();
-}
-
-export function getChannelUrl(channelId: ChannelId): string { return CHANNEL_URLS[channelId]; }
-export function getPartitionName(channelId: ChannelId): string { return PARTITION_NAMES[channelId]; }
 
 /* ═══════════════════════════════════════════════════════════════
    Intelligent Browser — Aria Snapshot + Playwright Locators
@@ -163,15 +52,7 @@ async function _ensureBrowsingContext(): Promise<BrowserContext> {
 export async function browseOpen(url: string, sessionId?: string): Promise<{ sessionId: string; title: string; url: string }> {
   const id = sessionId || `browse_${Date.now()}`;
 
-  // For inbox sessions, use channel context (with cookies)
-  let ctx: BrowserContext;
-  if (id.startsWith('inbox_outlook')) {
-    ctx = await _createContext('outlook');
-  } else if (id.startsWith('inbox_teams')) {
-    ctx = await _createContext('teams');
-  } else {
-    ctx = await _ensureBrowsingContext();
-  }
+  const ctx = await _ensureBrowsingContext();
 
   const existing = _sessions.get(id);
   if (existing) { try { await existing.page.close(); } catch { } }
@@ -179,11 +60,8 @@ export async function browseOpen(url: string, sessionId?: string): Promise<{ ses
   const page = await ctx.newPage();
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
-  // SPAs need extra time to render — especially Outlook and Teams
-  const isInbox = id.startsWith('inbox_');
-  const waitMs = isInbox ? 8000 : 3000;
-  console.log(`[Playwright] browseOpen: waiting ${waitMs}ms for SPA render...`);
-  await page.waitForTimeout(waitMs);
+  console.log(`[Playwright] browseOpen: waiting 3000ms for SPA render...`);
+  await page.waitForTimeout(3000);
   _sessions.set(id, { page, refs: new Map() });
 
   return { sessionId: id, title: await page.title(), url: page.url() };
@@ -351,6 +229,16 @@ export async function browseGetText(sessionId: string): Promise<string> {
     const main = document.querySelector('[role="main"]') || document.querySelector('main') || document.body;
     return (main as HTMLElement).innerText?.substring(0, 15000) || '';
   }));
+}
+
+/**
+ * Access the Playwright Page for an open browse session.
+ * Used by the deterministic static extractors to drive native locators
+ * without going through the LLM-oriented ref map.
+ */
+export function getSessionPage(sessionId: string): Page | null {
+  const s = _sessions.get(sessionId);
+  return s?.page ?? null;
 }
 
 /**

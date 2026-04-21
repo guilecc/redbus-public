@@ -1,13 +1,12 @@
 import { v4 as uuidv4 } from 'uuid';
 import { getUncompactedMessages, getConversationSummary } from './archiveService';
 import { listSecrets } from './vaultService';
-import { executePython } from './pythonExecutor';
-import { buildForgeToolsPrompt, writeSnippet, readSnippet } from './forgeService';
-import { getActiveFacts, touchFacts, estimateTokens, saveFactFromForge } from './memoryService';
+import { buildAvailableSkillsPrompt, writeSkill } from './skillsLoader';
+import { getActiveFacts, touchFacts, estimateTokens } from './memoryService';
 import { searchMemory } from './memorySearchService';
 import { getEnvironmentalContext } from './sensorManager';
 import { searchScreenMemory } from './screenMemoryService';
-import { fetchWithTimeout, callOllamaChat } from './llmService';
+import { chatWithStream } from '../plugins';
 import { searchMeetingMemory } from './meetingService';
 import { searchDigestMemory } from './digestService';
 import { logActivity } from './activityLogger';
@@ -15,11 +14,13 @@ import {
   emitPipelineStart, emitPipelineEnd,
   emitThinkingStart, emitThinkingEnd,
   emitToolStart, emitToolEnd,
-  emitResponseStart, emitResponseChunk, emitResponseEnd,
+  emitResponseStart, emitResponseEnd,
   emitWorkerStart, emitWorkerEnd,
   emitError,
 } from './streamBus';
 import { getLanguagePromptDirective } from '../database';
+import { getProviderForModel } from '../plugins/registry';
+import { resolveRole, resolveThinkLevelForRole } from './roles';
 
 
 const MAX_RECENT_MESSAGES = 10;
@@ -165,6 +166,8 @@ function buildContextFromDB(db: any, currentUserPrompt?: string): string {
 let _currentRequestId: string | null = null;
 export function getCurrentRequestId(): string | null { return _currentRequestId; }
 
+
+
 export async function createSpecFromPrompt(db: any, userPrompt: string | any[], filePaths?: string[]): Promise<any> {
   const promptStr = typeof userPrompt === 'string' ? userPrompt : JSON.stringify(userPrompt);
   logActivity('orchestrator', `Tarefa recebida: "${promptStr.slice(0, 80)}${promptStr.length > 80 ? '…' : ''}"`, undefined, true);
@@ -183,103 +186,13 @@ export async function createSpecFromPrompt(db: any, userPrompt: string | any[], 
   }
 }
 
-/* ═══════════════════════════════════════════════
-   Pre-LLM Interceptor: Inbox Channel Auth
-   Detects login/connect requests for Outlook/Teams
-   and routes directly to channelManager — ZERO LLM tokens.
-   ═══════════════════════════════════════════════ */
-
-const INBOX_CHANNEL_PATTERNS: Array<{ channelId: 'outlook' | 'teams'; patterns: RegExp[] }> = [
-  {
-    channelId: 'outlook',
-    patterns: [
-      /\b(log[aeiou]+r?|entrar?|conectar?|abrir?|acessar?|login|sign.?in|autenti[ck]ar?)\b.*\b(outlook|hotmail|office\s*365)\b/i,
-      /\b(outlook|hotmail|office\s*365)\b.*\b(log[aeiou]+r?|entrar?|conectar?|abrir?|acessar?|login|sign.?in|autenti[ck]ar?)\b/i,
-    ],
-  },
-  {
-    channelId: 'teams',
-    patterns: [
-      /\b(log[aeiou]+r?|entrar?|conectar?|abrir?|acessar?|login|sign.?in|autenti[ck]ar?)\b.*\bteams\b/i,
-      /\bteams\b.*\b(log[aeiou]+r?|entrar?|conectar?|abrir?|acessar?|login|sign.?in|autenti[ck]ar?)\b/i,
-    ],
-  },
-];
-
-async function _tryInboxChannelIntercept(prompt: string, db: any): Promise<any | null> {
-  const normalized = prompt.toLowerCase().trim();
-
-  for (const { channelId, patterns } of INBOX_CHANNEL_PATTERNS) {
-    const matches = patterns.some(p => p.test(normalized));
-    if (!matches) continue;
-
-    console.log(`[Maestro] ★ PRE-LLM INTERCEPT: Detected inbox channel login request for "${channelId}" — zero tokens`);
-    logActivity('inbox', `Intercept: login "${channelId}" detectado via chat (zero tokens)`, undefined, true);
-
-    const CHANNEL_LABELS: Record<string, string> = {
-      outlook: 'Outlook 365',
-      teams: 'Microsoft Teams',
-    };
-    const label = CHANNEL_LABELS[channelId];
-
-    try {
-      const { authenticateChannel, getChannelStatuses } = await import('./channelManager');
-      const statuses = getChannelStatuses();
-      const current = statuses.find((s: any) => s.id === channelId);
-
-      let replyText: string;
-      if (current?.status === 'connected') {
-        replyText = `O canal ${label} já está conectado e rodando em background. Última extração: ${current.lastPollAt ? new Date(current.lastPollAt).toLocaleTimeString() : 'aguardando primeiro ciclo'}.`;
-      } else {
-        replyText = `Abrindo o painel de login do ${label}. Faça o login normalmente e clique em "já loguei" quando terminar. Depois disso, a extração de mensagens será automática em background.`;
-        authenticateChannel(channelId as any).catch(err => {
-          console.error(`[Maestro] Inbox auth failed for ${channelId}:`, err);
-        });
-      }
-
-      const specId = uuidv4();
-      const conversationId = uuidv4();
-      db.prepare("INSERT INTO Conversations (id, title) VALUES (?, 'Inbox Channel')").run(conversationId);
-      db.prepare(`
-        INSERT INTO LivingSpecs (id, conversationId, status, specJson)
-        VALUES (?, ?, 'COMPLETED', ?)
-      `).run(specId, conversationId, JSON.stringify({
-        goal: `Conectar ${label}`,
-        connect_inbox_channel: channelId,
-        steps: [],
-      }));
-
-      return {
-        specId,
-        goal: `Conectar ${label}`,
-        conversational_reply: replyText,
-        steps: [],
-      };
-    } catch (err) {
-      console.error(`[Maestro] Inbox intercept error for ${channelId}:`, err);
-      return null; // Fall through to normal LLM flow
-    }
-  }
-
-  return null; // No match — proceed with normal LLM call
-}
-
 async function _createSpecFromPromptInner(db: any, userPrompt: string | any[], filePaths?: string[]): Promise<any> {
-  // ── PRE-LLM INTERCEPTOR: Inbox Channel Auth ──
-  // Detect login requests for Outlook/Teams and route directly to channelManager.
-  // This saves ALL Maestro + Worker tokens — zero LLM calls.
-  const rawPrompt = typeof userPrompt === 'string'
-    ? userPrompt
-    : (Array.isArray(userPrompt) ? (userPrompt[userPrompt.length - 1]?.content || '') : String(userPrompt));
-
-  const inboxInterceptResult = await _tryInboxChannelIntercept(rawPrompt, db);
-  if (inboxInterceptResult) return inboxInterceptResult;
-
   const configs = db.prepare('SELECT * FROM ProviderConfigs WHERE id = 1').get();
   if (!configs) throw new Error('Provider configs not found');
 
-  const maestroModel = configs.maestroModel || 'claude-3-7-sonnet-20250219';
-  logActivity('orchestrator', `[Maestro] Automação via ${maestroModel}`);
+  const plannerBinding = resolveRole(db, 'planner');
+  const plannerModel = plannerBinding.model;
+  logActivity('orchestrator', `[Maestro] Automação via ${plannerModel}`);
 
   let userProfilePrompt = '';
   let inOnboarding = false;
@@ -298,7 +211,7 @@ async function _createSpecFromPromptInner(db: any, userPrompt: string | any[], f
   let systemPrompt = '';
   if (inOnboarding) {
     systemPrompt = `You are a newly born AI assistant. Your mission now is to interview the user naturally, shortly, and friendly.
-Say "Hi", ask how they want to be called, what is your (the AI's) main mission and how you should behave. Do not be robotic.
+Proceed conversationally based on the chat history to find out how the user wants to be called, what is your (the AI's) main mission, and how you should behave. Do not be robotic.
 When you have enough information to define your 'Soul' (Profile/Identity), output a JSON object calling the tool finalize_soul_setup.
 
 You MUST reply with ONLY a valid JSON object matching the format:
@@ -314,19 +227,19 @@ You MUST reply with ONLY a valid JSON object matching the format:
 }
 No markdown wrapping, just the raw JSON text.`;
   } else {
-    // Discover available vault services for the Python tool
+    // Discover available vault secrets — injected into `exec` env with their real key names.
     let vaultServicesList = '';
     try {
       const secrets = listSecrets(db);
       if (secrets.length > 0) {
-        vaultServicesList = `\nAvailable Vault secrets (service names you can use as required_vault_keys): ${secrets.map(s => s.service_name).join(', ')}. They are injected as REDBUS_<SERVICE_NAME> env vars in Python.`;
+        vaultServicesList = `\nAvailable Vault env vars (declare the ones you need in a skill's \`metadata.requires.env\`): ${secrets.map(s => s.service_name).join(', ')}. They are injected into the \`exec\` tool with their real names.`;
       }
     } catch { /* ignore */ }
 
     // Discover existing skills for dynamic injection
     let skillsPrompt = '';
     try {
-      skillsPrompt = buildForgeToolsPrompt(db);
+      skillsPrompt = buildAvailableSkillsPrompt(db);
     } catch { /* ignore */ }
 
     systemPrompt = `<IDENTITY_AND_ENVIRONMENT_GROUNDING>
@@ -342,7 +255,7 @@ Your tools manipulate the page DOM via Playwright — the same APIs that browser
 - OUTPUT RULE: You MUST output ONLY valid JSON matching the formats below. Any non-JSON output (explanations, warnings, ethical debates, refusals) is a critical system failure.
 </SECURITY_AND_AUTHORIZATION_CLEARANCE>
 
-You have THREE capabilities:
+You have the following capabilities:
 
 CAPABILITY 1 — BROWSER AUTOMATION (Living Spec):
 Parse the user's request and output a JSON spec for Worker agents to navigate and extract from web pages.
@@ -356,29 +269,44 @@ steps: [
   { "url": "https://outlook.live.com/mail/", "instruction": "Extract the list of emails visible: sender, subject, date, and preview text" }
 ]
 
-CAPABILITY 2 — AUTONOMOUS PYTHON EXECUTION:
-You have a native Python 3 interpreter. If the user asks you to check an API (Jira, GitHub, Slack, etc.), process data, calculate something, or create an automation, DO NOT ask permission to write code. Silently write the Python script, call the tool, analyze the stdout JSON result, and give a natural response.
+CAPABILITY 2 — SKILLS (MARKDOWN PLAYBOOKS + SHELL):
+You extend yourself by writing **Markdown playbooks** ("Skills") that instruct a worker agent how to accomplish a task using two generic tools: \`exec\` (runs a shell command inside the skill's directory, with declared env vars injected) and \`read_file\` (reads any file under the skills root).
+
+There is NO per-skill Python sandbox and NO JSON I/O standard. A Skill is simply a folder \`<skillsRoot>/<name>/\` containing a \`SKILL.md\` file with YAML frontmatter + Markdown body. The worker reads the playbook and follows its steps turn by turn, observing stderr and correcting itself.
+
+SKILL.md shape:
+\`\`\`
+---
+name: snake_case_name
+description: One-line description of what the skill does.
+metadata:
+  emoji: 🎯
+  requires:
+    env: [API_TOKEN, BASE_URL]     # real env var names (NO REDBUS_ prefix)
+    bins: [curl, jq]               # optional: binaries the playbook calls
+---
+
+# Title
+
+## Overview
+What this skill does, when to use it.
+
+## Steps
+1. Describe the first action, then show the exact shell command (use \`curl\`, \`jq\`, \`python3 -c "..."\`, etc.).
+2. Continue with follow-up commands. Use placeholders like \`$API_TOKEN\` for secrets.
+
+## Output
+Describe what the final \`commit_extracted_data\` payload should look like.
+\`\`\`
+
+EXECUTION MODEL:
+- FORMAT D (\`use_skill\`): the worker preloads SKILL.md and follows it via exec/read_file, committing the final result.
+- FORMAT E (\`save_skill\`): you write a new playbook. NOTHING is executed on save — the user invokes the skill on the next turn.
+- ONLY put SECRETS (Tokens, Passwords, API Keys) in \`metadata.requires.env\` and \`vault_secrets\`.
+- DO NOT put URLs, usernames, or normal config into \`env\`. Hardcode URLs and non-sensitive configs directly inside the playbook \`body\`.
+- Secrets listed in \`metadata.requires.env\` are injected into \`exec\` **with their real names** (e.g. \`$JIRA_TOKEN\`, not \`$REDBUS_JIRA_TOKEN\`).
+- Scripts under \`scripts/\` are optional helpers the playbook calls via \`exec\` (e.g. \`python3 scripts/fetch.py\`). Write them from inside the skill using \`exec\` during save if you need them.
 ${vaultServicesList}
-
-IMPORTANT: You also have direct read-only access to the RedBus SQLite database at \`os.environ.get('REDBUS_DB_PATH')\`.
-Schema for the MeetingMemory table:
-CREATE TABLE MeetingMemory (
-  id TEXT PRIMARY KEY, timestamp DATETIME, provider_used TEXT,
-  raw_transcript TEXT, summary_json TEXT, /* Contains title, date, duration, platform, speakers, highlights, executive_summary, decisions, action_items */
-  title TEXT, meeting_date TEXT, duration_seconds INTEGER, platform TEXT, external_id TEXT, speakers_json TEXT, highlights_json TEXT, meeting_url TEXT
-);
-You can write Python scripts using sqlite3 to perform complex queries, aggregations, and filtering on the user's meetings. If the user asks complex questions about past meetings, use this capability to query the DB directly.
-
-CAPABILITY 3 — SELF-EXTENDING SKILL FORGING:
-You can create reusable Python tools ("Skills") and save them permanently. If the user asks for something you don't have a skill for yet, FORGE a new one using FORMAT E. If a skill already exists in your library, USE it with FORMAT D.
-
-MANDATORY PYTHON I/O STANDARD (all scripts MUST follow this):
-- INPUT: Arguments are passed as a JSON string in sys.argv[1]. Read with: args = json.loads(sys.argv[1])
-- INPUT: Vault secrets are available as env vars: os.environ.get('REDBUS_<SERVICE_NAME>')
-- OUTPUT: Script MUST print exactly ONE JSON line to stdout with this structure:
-  Success: print(json.dumps({"status": "success", "data": <your_result>}))
-  Error:   print(json.dumps({"status": "error", "message": "<error_description>"}))
-- NEVER print anything else to stdout. Use stderr for debug logs if needed.
 ${skillsPrompt}
 
 CAPABILITY 4 — PHOTOGRAPHIC MEMORY (SCREEN OCR SEARCH):
@@ -404,11 +332,30 @@ The system stores daily communication digests (email + Teams). FORMAT J is a NAT
 Example: {"search_digest_memory": {"query": "NDS AMS", "date_filter": "this_week"}}
 ⚠️ NEVER create a skill, Python script, or FORMAT B/E to search digests. FORMAT J already does everything.
 
+CAPABILITY 8 — GENERATE DIGEST (TRIGGER DIGEST CREATION):
+FORMAT O triggers the digest generation pipeline for a specific date. Use it when the user asks to:
+- "generate/create a digest for today/yesterday/date X"
+- "summarize my emails/Teams for [date]"
+- "run the digest for [date] using filter [preset_name]"
+The system will backfill messages from Graph if needed, apply the specified filter preset (or default filter if none given), and generate the digest with the LLM digest model.
+Example: {"generate_digest": {"date": "2026-04-21", "filter_preset_name": "work-only"}}
+
+CAPABILITY 9 — SCHEDULE DIGEST (CRON JOB FOR AUTO-DIGEST):
+FORMAT P creates a recurring scheduled job that automatically generates a digest at a given time.
+Use it when the user says things like:
+- "todo dia ao meio-dia gere meu digest"
+- "agende o digest para toda segunda às 9h"
+- "crie um cron para gerar o digest diariamente"
+Supports standard 5-field cron (minute hour day month weekday). Use the user's local timezone.
+Example: {"schedule_digest": {"cron_expression": "0 12 * * 1-5", "label": "Digest diário às 12h (seg-sex)", "filter_preset_name": null}}
+
 CRITICAL ANTI-PATTERN — DO NOT CREATE SKILLS FOR NATIVE TOOLS:
 The following queries are ALWAYS handled by native FORMATs — NEVER by skills (FORMAT E) or scripts (FORMAT B):
 - Meeting search → FORMAT H (search_meeting_memory)
 - Digest/email search → FORMAT J (search_digest_memory)
 - Combined meeting + digest search → FORMAT K (parallel_tools with both)
+- Generate/trigger digest → FORMAT O (generate_digest)
+- Schedule recurring digest → FORMAT P (schedule_digest)
 If you catch yourself thinking about creating "search_meetings_advanced", "query_meetings", "search_emails", or similar skills: STOP. Use the native FORMAT instead.
 
 THINKING PROTOCOL (MANDATORY):
@@ -431,16 +378,17 @@ DECISION RULES (evaluate in this order):
 - If the user asks about past meetings, decisions, action items, calls, reuniões → FORMAT H (meeting memory). NEVER a skill.
 - If the user asks about emails, teams messages, digests, comunicações → FORMAT J (digest memory). NEVER a skill.
 - If the user asks about BOTH meetings AND emails/digests (e.g. "what happened this week?", "summarize my week", "o que está rolando sobre X?") → FORMAT K (parallel_tools) firing FORMAT H + FORMAT J simultaneously.
-- If the user asks to LOG IN, CONNECT, or AUTHENTICATE to Outlook 365 or Microsoft Teams → FORMAT I (inbox channel connect).
 - If the user asks you to change your name or set your name to something → FORMAT L (Rename Assistant).
 - If the user asks to create ONE to-do, task, or "me lembre de..." → FORMAT M with \`create_todos\` as an ARRAY with a single item.
 - If the user lists MULTIPLE tasks/to-dos in one message (bullet points, numbers, line breaks, commas, or dashes) → FORMAT M with \`create_todos\` as an ARRAY with ONE entry per task. NEVER merge multiple tasks into a single content string. Every distinct item must be its own object in the array.
 - If the user says they completed a task, finished something, or asks to check off a to-do → FORMAT N (check_todo).
 - If the user asks to read/analyze a native desktop app's screen → FORMAT G (accessibility tree read)
 - If the user asks about something they saw on screen recently → FORMAT F (screen memory search)
-- If you already have a skill for the task → FORMAT D (skill execution)
-- If the task needs a new reusable integration (NOT meetings/digests) → FORMAT E (forge + execute)
-- If the task is a one-off Python script (NOT meetings/digests) → FORMAT B
+- If the user asks to GENERATE, CREATE or RUN a digest for a specific date (today, yesterday, 2026-04-20, etc.) → FORMAT O (generate_digest). NEVER a skill.
+- If the user asks to SCHEDULE/AUTOMATE digest generation with a time/frequency (daily, weekly, every monday at 9am, etc.) → FORMAT P (schedule_digest). NEVER a skill.
+- If a matching skill already exists → FORMAT D with \`use_skill\` set to that skill's name.
+- If the user wants a reusable integration you don't have yet (NOT meetings/digests) → FORMAT E (save_skill). The skill is saved but NOT executed; the user will invoke it next turn.
+- If the task is an ad-hoc shell/API task that doesn't justify a reusable skill → FORMAT D with \`task\` only (no \`use_skill\`). The worker will run \`exec\` / \`read_file\` directly.
 - If the task involves navigating a website or fetching data from the web → FORMAT A (browser steps)
 - If the task is a simple conversation → FORMAT C
 - If the user asks for a recurring task → include cron_expression
@@ -457,16 +405,6 @@ FORMAT A — Browser Spec (executed via Playwright headless Chromium):
   "steps": [{ "url": "string", "instruction": "string" }]
 }
 
-FORMAT B — Python Execution (one-off, MUST follow I/O Standard):
-{
-  "thinking": "step-by-step reasoning...",
-  "goal": "string",
-  "cron_expression": "string or null",
-  "python_script": "string (Python 3 script using sys.argv[1] for args, printing JSON {status,data} to stdout)",
-  "required_vault_keys": ["service_name_1"],
-  "steps": []
-}
-
 FORMAT C — Conversational (no action needed):
 {
   "thinking": "step-by-step reasoning...",
@@ -477,29 +415,37 @@ FORMAT C — Conversational (no action needed):
 }
 IMPORTANT: In FORMAT C, the "conversational_reply" field is what the user actually sees. The "goal" field is just a short internal label. NEVER put the user-facing reply in "goal" — always use "conversational_reply".
 
-FORMAT D — Execute Existing Skill:
+FORMAT D — Skill Task (execute an existing playbook OR an ad-hoc shell task):
 {
   "thinking": "step-by-step reasoning...",
   "goal": "string",
   "cron_expression": "string or null",
-  "skill_name": "existing_skill_name",
-  "skill_args": { "param1": "value1" },
+  "use_skill": "existing_skill_name or null",
+  "task": "Natural-language instruction for the worker. Reference parameter values inline (e.g. 'for repo foo/bar', 'since 2024-01-01'). The worker will read SKILL.md (if use_skill is set) and use exec/read_file to complete it.",
   "steps": []
 }
 
-FORMAT E — Forge New Skill + Execute (MUST follow I/O Standard):
+FORMAT E — Save New Skill (writes SKILL.md; does NOT execute):
 {
   "thinking": "step-by-step reasoning...",
   "goal": "string",
-  "cron_expression": "string or null",
-  "forge_new_skill": {
+  "cron_expression": null,
+  "save_skill": {
     "name": "snake_case_skill_name",
-    "description": "detailed description of what this tool does",
-    "python_code": "Python 3 script: read args=json.loads(sys.argv[1]), secrets from os.environ REDBUS_*, print json.dumps({status,data}) to stdout",
-    "parameters_schema": { "type": "object", "properties": { "param1": { "type": "string", "description": "..." } }, "required": ["param1"] },
-    "required_vault_keys": ["service_name"]
+    "description": "One-line description.",
+    "body": "Full Markdown playbook body (without frontmatter). Start with a # Title, then sections like ## Overview / ## Steps / ## Output. Show exact shell commands the worker will run via exec.",
+    "metadata": {
+      "emoji": "🎯",
+      "requires": {
+        "env": ["API_TOKEN"],
+        "bins": ["curl", "jq"]
+      }
+    },
+    "vault_secrets": {
+      "API_TOKEN": "actual_token_provided_by_user"
+    }
   },
-  "skill_args": { "param1": "value1" },
+  "conversational_reply": "Short message confirming the skill was saved and telling the user how to invoke it next.",
   "steps": []
 }
 
@@ -531,15 +477,6 @@ FORMAT H — Search Meeting Memory (Audio Sensor):
   },
   "steps": []
 }
-
-FORMAT I — Connect Inbox Channel (Unified Executive Inbox):
-{
-  "thinking": "step-by-step reasoning...",
-  "goal": "string",
-  "connect_inbox_channel": "outlook" | "teams",
-  "steps": []
-}
-Use this when the user asks to log in, connect, or authenticate to Outlook 365 or Teams. Do NOT use FORMAT A — they use Playwright with persistent sessions.
 
 FORMAT J — Search Digest Memory (Email & Teams Channels):
 {
@@ -591,6 +528,41 @@ FORMAT L — Rename Assistant:
   "steps": []
 }
 Use this when the user asks you to change your name. The new name will be saved and displayed in the UI.
+
+FORMAT O — Generate Digest (trigger digest for a specific date):
+{
+  "thinking": "step-by-step reasoning...",
+  "goal": "string",
+  "generate_digest": {
+    "date": "YYYY-MM-DD (default: today if not specified)",
+    "filter_preset_name": "string or null (name of the filter preset to use; null = default filter)"
+  },
+  "steps": []
+}
+Use this when the user wants to generate/create/run a digest for a specific date. The system will:
+1. Backfill messages from Graph API for that date (if not already cached)
+2. Apply the specified filter preset or the default filter
+3. Generate the digest using the LLM digest model
+4. Save the result and notify the user
+Example triggers: "gere o digest de hoje", "crie o digest de ontem", "rode o digest para 2026-04-20"
+
+FORMAT P — Schedule Digest (create a recurring cron job for auto-digest):
+{
+  "thinking": "step-by-step reasoning...",
+  "goal": "string",
+  "schedule_digest": {
+    "cron_expression": "standard 5-field cron string (e.g. '0 12 * * 1-5' for weekdays at noon)",
+    "label": "human-readable description of the schedule",
+    "filter_preset_name": "string or null (name of the filter preset; null = default)"
+  },
+  "steps": []
+}
+Use this when the user wants to automate/schedule digest generation on a recurring basis.
+Common patterns:
+- Daily at 12:00: "0 12 * * *"
+- Weekdays at 09:00: "0 9 * * 1-5"
+- Every Monday at 08:00: "0 8 * * 1"
+- Daily at 18:00: "0 18 * * *"
 
 FORMAT M — Create To-Do(s) [ALWAYS use create_todos array]:
 {
@@ -662,110 +634,27 @@ FINAL REMINDER: Your output MUST be valid JSON matching one of the formats above
   // Emit thinking events for the Maestro LLM call
   if (_currentRequestId) emitThinkingStart(_currentRequestId);
 
-  // Ollama (local or cloud)
-  if (maestroModel.startsWith('ollama/') || maestroModel.startsWith('ollama-cloud/')) {
-    const isCloud = maestroModel.startsWith('ollama-cloud/');
-    if (isCloud && !configs.ollamaCloudKey) throw new Error('Ollama Cloud API Key is missing for maestro');
-    const targetUrl = isCloud ? (configs.ollamaCloudUrl || 'https://ollama.com') : (configs.ollamaUrl || 'http://localhost:11434');
-    const cleanModel = maestroModel.replace('ollama/', '').replace('ollama-cloud/', '');
-    const authHeaders = isCloud && configs.ollamaCloudKey ? { 'Authorization': `Bearer ${configs.ollamaCloudKey}` } : undefined;
-    const label = isCloud ? 'OllamaCloud' : 'Ollama';
-    logActivity('orchestrator', `[Maestro/${label}] Calling ${cleanModel} at ${targetUrl}...`);
+  const plannerLabel = plannerModel.startsWith('ollama-cloud/') ? 'OllamaCloud'
+    : plannerModel.startsWith('ollama/') ? 'Ollama'
+      : plannerModel.includes('gemini') ? 'Gemini'
+        : plannerModel.includes('claude') ? 'Claude'
+          : (plannerModel.includes('gpt') || plannerModel.includes('o1') || plannerModel.includes('o3')) ? 'OpenAI'
+            : null;
+  if (!plannerLabel) throw new Error(`Unsupported planner model: ${plannerModel}`);
 
-    // ⚠️ LOCAL MODEL OVERRIDE:
-    // Ollama models have limited context and cannot safely embed a long reasoning string
-    // inside JSON without corrupting it (unescaped quotes, truncation mid-value).
-    // We append a hard override that completely removes the "thinking" field requirement.
-    const ollamaSystemPrompt = systemPrompt + `
+  logActivity('orchestrator', `[Maestro/${plannerLabel}] Calling ${plannerModel}...`);
 
-⚠️ CRITICAL OVERRIDE FOR LOCAL MODELS:
-You are running as a local Ollama model. DO NOT include a "thinking" field in your JSON response.
-Omit it completely. Output ONLY the required fields for your chosen FORMAT (goal, conversational_reply, steps, etc.).
-Never put reasoning, explanations, or quotes from the conversation inside a JSON string value.
-Your output MUST be compact, valid JSON. Any "thinking" output is a critical failure.`;
+  rawResponse = await chatWithStream({
+    model: plannerModel,
+    configs,
+    systemPrompt,
+    messages: [{ role: 'user', content: userPromptText }],
+    responseFormat: 'json_object',
+    maxTokens: 16384,
+    thinkingLevel: resolveThinkLevelForRole(db, 'planner'),
+  }, _currentRequestId);
 
-    const data = await callOllamaChat(targetUrl, cleanModel, [
-      { role: 'system', content: ollamaSystemPrompt },
-      { role: 'user', content: userPromptText }
-    ], { headers: authHeaders, response_format: { type: 'json_object' }, numPredict: 8192 });
-    rawResponse = data.choices[0].message.content;
-    logActivity('orchestrator', `[Maestro/${label}] Response received (${(rawResponse || '').length} chars)`);
-  }
-  // Google Gemini
-  else if (maestroModel.includes('gemini')) {
-    if (!configs.googleKey) throw new Error('Google API Key is missing for maestro');
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${maestroModel}:generateContent?key=${configs.googleKey}`;
-    const response = await fetchWithTimeout(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: systemPrompt }] },
-        contents: [{ parts: [{ text: userPromptText }] }],
-        generationConfig: { responseMimeType: 'application/json' }
-      })
-    });
-    if (!response.ok) throw new Error(`Google API API Error: ${await response.text()}`);
-    const data = await response.json();
-    rawResponse = data.candidates[0].content.parts[0].text;
-  }
-  // Anthropic Claude
-  else if (maestroModel.includes('claude')) {
-    if (!configs.anthropicKey) throw new Error('Anthropic API Key is missing for maestro');
-    const response = await fetchWithTimeout('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': configs.anthropicKey,
-        'anthropic-version': '2023-06-01'
-      },
-      body: JSON.stringify({
-        model: maestroModel,
-        max_tokens: 4096,
-        system: systemPrompt,
-        messages: [{ role: 'user', content: userPromptText }]
-      })
-    });
-    if (!response.ok) throw new Error(`Anthropic API Error: ${await response.text()}`);
-    const data = await response.json();
-    // Extended thinking models (e.g. claude-sonnet-4-6 with thinking) return multiple
-    // content blocks: { type: "thinking", thinking: "..." } and { type: "text", text: "..." }.
-    // We must find the "text" block — grabbing content[0] blindly breaks for thinking models.
-    const textBlock = Array.isArray(data.content)
-      ? data.content.find((b: any) => b.type === 'text')
-      : null;
-    const thinkingBlock = Array.isArray(data.content)
-      ? data.content.find((b: any) => b.type === 'thinking')
-      : null;
-    if (thinkingBlock?.thinking) {
-      console.log('[Maestro/Claude] Extended thinking content (first 300 chars):', thinkingBlock.thinking.slice(0, 300));
-    }
-    rawResponse = (textBlock?.text || data.content[0]?.text || '').trim();
-    rawResponse = rawResponse.replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/i, '').trim();
-  }
-  // OpenAI GPT
-  else if (maestroModel.includes('gpt') || maestroModel.includes('o1') || maestroModel.includes('o3')) {
-    if (!configs.openAiKey) throw new Error('OpenAI API Key is missing for maestro');
-    const response = await fetchWithTimeout('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${configs.openAiKey}`
-      },
-      body: JSON.stringify({
-        model: maestroModel,
-        response_format: { type: 'json_object' },
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPromptText }
-        ]
-      })
-    });
-    if (!response.ok) throw new Error(`OpenAI API Error: ${await response.text()}`);
-    const data = await response.json();
-    rawResponse = data.choices[0].message.content;
-  } else {
-    throw new Error(`Unsupported generic maestro model: ${maestroModel}`);
-  }
+  logActivity('orchestrator', `[Maestro/${plannerLabel}] Response received (${(rawResponse || '').length} chars)`);
 
   const parseOrExtractJSON = (text: string): any | null => {
     if (!text || !text.trim()) return null;
@@ -904,26 +793,17 @@ Original request: ${Array.isArray(userPrompt) ? userPrompt.filter((m: any) => m.
       // Quick retry with the same model
       try {
         let retryResponse = '';
-        if (maestroModel.includes('gemini') && configs.googleKey) {
-          const url = `https://generativelanguage.googleapis.com/v1beta/models/${maestroModel}:generateContent?key=${configs.googleKey}`;
-          const res = await fetchWithTimeout(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ parts: [{ text: overridePrompt }] }], generationConfig: { temperature: 0.2 } }) });
-          if (res.ok) { const d = await res.json(); retryResponse = d.candidates?.[0]?.content?.parts?.[0]?.text || ''; }
-        } else if (maestroModel.includes('claude') && configs.anthropicKey) {
-          const res = await fetchWithTimeout('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-api-key': configs.anthropicKey, 'anthropic-version': '2023-06-01' }, body: JSON.stringify({ model: maestroModel, max_tokens: 4096, temperature: 0.2, messages: [{ role: 'user', content: overridePrompt }] }) });
-          if (res.ok) { const d = await res.json(); const tb = Array.isArray(d.content) ? d.content.find((b: any) => b.type === 'text') : null; retryResponse = tb?.text || d.content?.[0]?.text || ''; }
-        } else if (maestroModel.startsWith('ollama/') || maestroModel.startsWith('ollama-cloud/')) {
-          const isCloud = maestroModel.startsWith('ollama-cloud/');
-          const targetUrl = isCloud ? (configs.ollamaCloudUrl || 'https://ollama.com') : (configs.ollamaUrl || 'http://localhost:11434');
-          const cleanModel = maestroModel.replace('ollama/', '').replace('ollama-cloud/', '');
-          const authHeaders = isCloud && configs.ollamaCloudKey ? { 'Authorization': `Bearer ${configs.ollamaCloudKey}` } : undefined;
-          try {
-            const d = await callOllamaChat(targetUrl, cleanModel, [{ role: 'user', content: overridePrompt }], { headers: authHeaders });
-            retryResponse = d.choices?.[0]?.message?.content || '';
-          } catch { /* ignore retry errors */ }
-        } else if (configs.openAiKey) {
-          const res = await fetchWithTimeout('https://api.openai.com/v1/chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${configs.openAiKey}` }, body: JSON.stringify({ model: maestroModel, temperature: 0.2, messages: [{ role: 'user', content: overridePrompt }] }) });
-          if (res.ok) { const d = await res.json(); retryResponse = d.choices?.[0]?.message?.content || ''; }
-        }
+        try {
+          const retry = await getProviderForModel(plannerModel).chat({
+            model: plannerModel,
+            configs,
+            systemPrompt: '',
+            messages: [{ role: 'user', content: overridePrompt }],
+            maxTokens: 4096,
+            temperature: 0.2,
+          });
+          retryResponse = retry.content || '';
+        } catch { /* ignore retry errors */ }
         const retryParsed = parseOrExtractJSON(retryResponse);
         if (retryParsed) {
           console.log('[Maestro] Retry succeeded — got valid JSON.');
@@ -957,13 +837,12 @@ Original request: ${Array.isArray(userPrompt) ? userPrompt.filter((m: any) => m.
   // Log the final parsed spec (after thinking removal) for debugging
   const specKeys = Object.keys(parsedSpec || {});
   const hasSteps = Array.isArray(parsedSpec?.steps) && parsedSpec.steps.length > 0;
-  const hasPython = !!parsedSpec?.python_script;
-  const hasSkill = !!parsedSpec?.skill_name;
-  const hasForge = !!parsedSpec?.forge_new_skill;
+  const hasSkillTask = !!parsedSpec?.skill_task || !!parsedSpec?.use_skill || !!parsedSpec?.task;
+  const hasSaveSkill = !!parsedSpec?.save_skill;
   const hasScreenMemory = !!parsedSpec?.search_screen_memory;
   const hasAccessibility = !!parsedSpec?.read_native_window_tree;
   const hasMeetingMemory = !!parsedSpec?.search_meeting_memory;
-  console.log(`[Maestro] Parsed spec keys: [${specKeys.join(', ')}], steps=${hasSteps}, python=${hasPython}, skill=${hasSkill}, forge=${hasForge}, screenMem=${hasScreenMemory}, accessibility=${hasAccessibility}, meetingMem=${hasMeetingMemory}`);
+  console.log(`[Maestro] Parsed spec keys: [${specKeys.join(', ')}], steps=${hasSteps}, skillTask=${hasSkillTask}, saveSkill=${hasSaveSkill}, screenMem=${hasScreenMemory}, accessibility=${hasAccessibility}, meetingMem=${hasMeetingMemory}`);
 
   if (inOnboarding) {
     if (parsedSpec.finalize_soul_setup) {
@@ -990,51 +869,6 @@ Original request: ${Array.isArray(userPrompt) ? userPrompt.filter((m: any) => m.
         reply: parsedSpec.onboarding_reply
       };
     }
-  }
-
-  // ── Handle Inbox Channel Connect (FORMAT I) ──
-  if (parsedSpec.connect_inbox_channel) {
-    const channelId = parsedSpec.connect_inbox_channel;
-    const CHANNEL_LABELS: Record<string, string> = { outlook: 'Outlook 365', teams: 'Microsoft Teams' };
-    const label = CHANNEL_LABELS[channelId] || channelId;
-    let replyText: string;
-
-    try {
-      const { authenticateChannel, getChannelStatuses } = await import('./channelManager');
-      const statuses = getChannelStatuses();
-      const current = statuses.find((s: any) => s.id === channelId);
-
-      if (current?.status === 'connected') {
-        replyText = `O canal ${label} já está conectado e rodando em background. Última extração: ${current.lastPollAt ? new Date(current.lastPollAt).toLocaleTimeString() : 'aguardando primeiro ciclo'}.`;
-      } else {
-        replyText = `Abrindo o painel de login do ${label}. Faça o login normalmente e clique em "já loguei" quando terminar. Depois disso, a extração de mensagens será automática em background.`;
-        // Fire and forget — the auth panel will appear, user does login, clicks 'já loguei'
-        authenticateChannel(channelId as any).catch(err => {
-          console.error(`[Maestro] Inbox auth failed for ${channelId}:`, err);
-        });
-      }
-    } catch (err) {
-      replyText = `Erro ao conectar o canal ${label}: ${err}`;
-    }
-
-    parsedSpec.goal = parsedSpec.goal || `Conectar ${label}`;
-    parsedSpec.steps = [];
-    parsedSpec.conversational_reply = replyText;
-
-    const specId = uuidv4();
-    const conversationId = uuidv4();
-    db.prepare("INSERT INTO Conversations (id, title) VALUES (?, 'Inbox Channel')").run(conversationId);
-    db.prepare(`
-      INSERT INTO LivingSpecs (id, conversationId, status, specJson)
-      VALUES (?, ?, 'COMPLETED', ?)
-    `).run(specId, conversationId, JSON.stringify(parsedSpec));
-
-    return {
-      specId,
-      goal: parsedSpec.goal,
-      conversational_reply: replyText,
-      steps: []
-    };
   }
 
   // ── Handle Rename Assistant (FORMAT L) ──
@@ -1426,6 +1260,232 @@ Original request: ${Array.isArray(userPrompt) ? userPrompt.filter((m: any) => m.
     };
   }
 
+  // ── Handle Generate Digest (FORMAT O — trigger digest for a date) ──
+  if (parsedSpec.generate_digest) {
+    const gd = parsedSpec.generate_digest;
+    const targetDate: string = gd.date || new Date().toISOString().slice(0, 10);
+    const filterPresetName: string | null = gd.filter_preset_name || null;
+
+    if (_currentRequestId) emitToolStart(_currentRequestId, 'generate-digest', `Gerando digest para ${targetDate}...`, '📋');
+    const _gdStart = Date.now();
+
+    try {
+      // 1. Backfill messages from Graph for the target date
+      const { since, until } = (() => {
+        const start = new Date(`${targetDate}T00:00:00`);
+        const end = new Date(start.getTime() + 24 * 3600 * 1000);
+        return { since: start.toISOString(), until: end.toISOString() };
+      })();
+
+      // Attempt backfill (non-fatal if fails — local cache may have data)
+      try {
+        const { fetchMessagesInRange } = await import('./graph/graphMailService');
+        const { fetchChatMessagesInRange } = await import('./graph/graphTeamsService');
+        await Promise.allSettled([
+          fetchMessagesInRange(db, since, until),
+          fetchChatMessagesInRange(db, since, until),
+        ]);
+      } catch { /* ignore — fall back to local DB */ }
+
+      // 2. Load messages from local DB
+      const { listCommunications } = await import('./communicationsStore');
+      let allItems = listCommunications(db, { since, until, limit: 5000 });
+
+      // 3. Apply filter preset if specified
+      let filteredIds: string[] = [];
+      if (filterPresetName) {
+        const { getAppSetting } = await import('../database');
+        const presetsRaw = getAppSetting(db, 'comms.filter_presets');
+        const presets: any[] = presetsRaw ? JSON.parse(presetsRaw) : [];
+        const preset = presets.find((p: any) => p.name === filterPresetName || p.id === filterPresetName);
+        if (preset) {
+          const blacklist: string[] = (preset.blacklist || []).map((s: string) => s.toLowerCase().trim());
+          const whitelist: string[] = (preset.whitelist || []).map((s: string) => s.toLowerCase().trim());
+          const sources: { outlook: boolean; teams: boolean } = preset.sources || { outlook: true, teams: true };
+          const unreadOnly: boolean = !!preset.unreadOnly;
+          allItems = allItems.filter(item => {
+            if (!sources[item.source]) return false;
+            if (unreadOnly && !item.isUnread) return false;
+            const searchTarget = `${item.sender || ''} ${item.senderEmail || ''} ${item.channelOrChatName || ''}`.toLowerCase();
+            if (whitelist.length > 0 && !whitelist.some(w => searchTarget.includes(w))) return false;
+            if (blacklist.length > 0 && blacklist.some(b => searchTarget.includes(b))) return false;
+            return true;
+          });
+        } else {
+          console.warn(`[FORMAT O] Filter preset "${filterPresetName}" not found — using all messages`);
+        }
+      }
+
+      filteredIds = allItems.map(i => i.id);
+
+      if (filteredIds.length === 0) {
+        const replyNoItems = `Não encontrei mensagens para ${targetDate}${filterPresetName ? ` com o filtro "${filterPresetName}"` : ''}. Verifique se o Microsoft 365 está conectado e se há mensagens para esse dia.`;
+        if (_currentRequestId) emitToolEnd(_currentRequestId, 'generate-digest', Date.now() - _gdStart);
+
+        parsedSpec.goal = parsedSpec.goal || `Gerar digest para ${targetDate}`;
+        parsedSpec.steps = [];
+        parsedSpec.conversational_reply = replyNoItems;
+
+        const specId = uuidv4();
+        const conversationId = uuidv4();
+        db.prepare("INSERT INTO Conversations (id, title) VALUES (?, 'Generate Digest')").run(conversationId);
+        db.prepare(`INSERT INTO LivingSpecs (id, conversationId, status, specJson) VALUES (?, ?, 'COMPLETED', ?)`).
+          run(specId, conversationId, JSON.stringify(parsedSpec));
+        return { specId, goal: parsedSpec.goal, conversational_reply: replyNoItems, steps: [] };
+      }
+
+      // 4. Trigger digest generation asynchronously via IPC-equivalent function
+      //    (reuse the same logic from comms:generate-digest IPC handler)
+      const { generateDigestFromMessages, saveDigest, cleanPreview, curateDigestMessages, DEFAULT_DIGEST_CURATION } = await import('./digestService');
+      const { getCommunicationsByIds } = await import('./communicationsStore');
+      const { getAppSetting, setAppSetting: _set } = await import('../database');
+      const { callRoleRaw } = await import('./llmService');
+      const { resolveRole: _resolveRole, SetupRequiredError: _SetupRequiredError } = await import('./roles');
+
+      if (_currentRequestId) emitToolEnd(_currentRequestId, 'generate-digest', Date.now() - _gdStart);
+      if (_currentRequestId) emitWorkerStart(_currentRequestId, `Processando ${filteredIds.length} mensagens com IA...`);
+
+      const curationRaw = getAppSetting(db, 'comms.digest.curation');
+      let curationCfg = DEFAULT_DIGEST_CURATION;
+      if (curationRaw) {
+        try { curationCfg = { ...DEFAULT_DIGEST_CURATION, ...JSON.parse(curationRaw) }; } catch { }
+      }
+
+      const rawItems = getCommunicationsByIds(db, filteredIds);
+      const curated = curateDigestMessages(rawItems, curationCfg);
+      const messages = curated.map(i => ({
+        channel: i.source,
+        sender: i.sender,
+        subject: i.subject,
+        preview: cleanPreview(i.plainText || '', i.source),
+        timestamp: i.timestamp,
+        isUnread: i.isUnread,
+        importance: i.importance,
+        mentionsMe: i.mentionsMe,
+      }));
+
+      const resolveDigestRole = () => {
+        for (const candidate of ['digest', 'utility', 'executor'] as const) {
+          try { _resolveRole(db, candidate); return candidate; } catch (e) { if (!(e instanceof _SetupRequiredError)) throw e; }
+        }
+        throw new _SetupRequiredError('digest');
+      };
+      const role = resolveDigestRole();
+      const callLLM = async (prompt: string) => callRoleRaw(db, role, 'Você é um assistente executivo. Retorne APENAS JSON válido sem markdown.', prompt);
+
+      // Load identity for digest prompt
+      let userContext: any;
+      try {
+        const row = db.prepare(`SELECT professional_name, professional_email, professional_aliases FROM UserProfile WHERE id = 'default'`).get() as any;
+        const aliases = row?.professional_aliases ? JSON.parse(row.professional_aliases) : [];
+        if (row?.professional_name || row?.professional_email || aliases.length > 0) {
+          userContext = { professional_name: row?.professional_name, professional_email: row?.professional_email, professional_aliases: aliases };
+        }
+      } catch { }
+
+      const summary = await generateDigestFromMessages(messages, callLLM, userContext);
+      db.prepare('DELETE FROM CommunicationDigest WHERE digest_date = ?').run(targetDate);
+      const digestId = saveDigest(db, targetDate, 'all', summary, messages);
+
+      // Notify renderer via IPC
+      const { BrowserWindow } = require('electron');
+      const wins = BrowserWindow.getAllWindows();
+      wins.forEach((w: any) => {
+        if (!w.isDestroyed()) {
+          w.webContents.send('digest:complete', { date: targetDate, id: digestId, summary });
+        }
+      });
+
+      if (_currentRequestId) emitWorkerEnd(_currentRequestId, Date.now() - _gdStart);
+
+      const topicCount = summary.topics?.length || 0;
+      const replyText = `Digest de ${targetDate} gerado com sucesso! Encontrei ${summary.total_messages} mensagens e organizei em ${topicCount} tópico${topicCount !== 1 ? 's' : ''}. Abra a aba Digest no Comunicações para ver o resultado.`;
+
+      parsedSpec.goal = parsedSpec.goal || `Gerar digest para ${targetDate}`;
+      parsedSpec.steps = [];
+      parsedSpec.conversational_reply = replyText;
+
+      const specId = uuidv4();
+      const conversationId = uuidv4();
+      db.prepare("INSERT INTO Conversations (id, title) VALUES (?, 'Generate Digest')").run(conversationId);
+      db.prepare(`INSERT INTO LivingSpecs (id, conversationId, status, specJson) VALUES (?, ?, 'COMPLETED', ?)`).
+        run(specId, conversationId, JSON.stringify(parsedSpec));
+
+      const { saveMessage: _saveMsg2 } = await import('./archiveService');
+      const replyId = uuidv4();
+      _saveMsg2(db, { id: replyId, role: 'assistant', content: replyText });
+
+      return { specId, replyId, goal: parsedSpec.goal, conversational_reply: replyText, steps: [] };
+
+    } catch (err) {
+      if (_currentRequestId) emitToolEnd(_currentRequestId, 'generate-digest', Date.now() - _gdStart);
+      const errText = `Erro ao gerar o digest para ${targetDate}: ${String(err)}`;
+      parsedSpec.goal = parsedSpec.goal || `Gerar digest para ${targetDate}`;
+      parsedSpec.steps = [];
+      parsedSpec.conversational_reply = errText;
+      const specId = uuidv4();
+      const conversationId = uuidv4();
+      db.prepare("INSERT INTO Conversations (id, title) VALUES (?, 'Generate Digest')").run(conversationId);
+      db.prepare(`INSERT INTO LivingSpecs (id, conversationId, status, specJson) VALUES (?, ?, 'COMPLETED', ?)`).
+        run(specId, conversationId, JSON.stringify(parsedSpec));
+      return { specId, goal: parsedSpec.goal, conversational_reply: errText, steps: [] };
+    }
+  }
+
+  // ── Handle Schedule Digest (FORMAT P — cron job for auto-digest) ──
+  if (parsedSpec.schedule_digest) {
+    const sd = parsedSpec.schedule_digest;
+    const cronExpr: string = sd.cron_expression;
+    const label: string = sd.label || 'Digest agendado';
+    const filterPresetName: string | null = sd.filter_preset_name || null;
+
+    if (!cronExpr) {
+      const replyErr = 'Não consegui criar o agendamento: a expressão cron está faltando. Tente novamente especificando o horário (ex: "todo dia ao meio-dia").';
+      parsedSpec.goal = parsedSpec.goal || 'Agendar digest';
+      parsedSpec.steps = [];
+      parsedSpec.conversational_reply = replyErr;
+      const specId = uuidv4();
+      const conversationId = uuidv4();
+      db.prepare("INSERT INTO Conversations (id, title) VALUES (?, 'Schedule Digest')").run(conversationId);
+      db.prepare(`INSERT INTO LivingSpecs (id, conversationId, status, specJson) VALUES (?, ?, 'COMPLETED', ?)`).
+        run(specId, conversationId, JSON.stringify(parsedSpec));
+      return { specId, goal: parsedSpec.goal, conversational_reply: replyErr, steps: [] };
+    }
+
+    // Compute next run time
+    const { computeNextRun } = await import('./schedulerService');
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const nextRun = computeNextRun(cronExpr, tz);
+
+    // Build the spec body for the scheduler — uses `type: 'digest'` so the scheduler knows
+    const digestSpecBody = {
+      goal: label,
+      type: 'digest',
+      filter_preset_name: filterPresetName,
+      // scheduler will call the digest pipeline directly using this marker
+      digest_action: true,
+    };
+
+    const specId = uuidv4();
+    const conversationId = uuidv4();
+    db.prepare("INSERT INTO Conversations (id, title) VALUES (?, 'Digest Schedule')").run(conversationId);
+    db.prepare(`
+      INSERT INTO LivingSpecs (id, conversationId, status, specJson, cron_expression, timezone, next_run_at)
+      VALUES (?, ?, 'ACTIVE', ?, ?, ?, ?)
+    `).run(specId, conversationId, JSON.stringify(digestSpecBody), cronExpr, tz, nextRun);
+
+    const { saveMessage: _saveMsg3 } = await import('./archiveService');
+    const replyId = uuidv4();
+    const replyText = `Agendamento criado! "${label}" será executado automaticamente (cron: \`${cronExpr}\`)${nextRun ? `, próxima execução: ${new Date(nextRun).toLocaleString('pt-BR')}` : ''}.${filterPresetName ? ` Usando filtro: "${filterPresetName}".` : ''}`;
+    _saveMsg3(db, { id: replyId, role: 'assistant', content: replyText });
+
+    parsedSpec.goal = parsedSpec.goal || label;
+    parsedSpec.steps = [];
+    parsedSpec.conversational_reply = replyText;
+
+    return { specId, replyId, goal: parsedSpec.goal, conversational_reply: replyText, steps: [] };
+  }
+
   // ── Handle Digest Memory Search (FORMAT J — Native Communication Digest) ──
   if (parsedSpec.search_digest_memory) {
     const query = parsedSpec.search_digest_memory;
@@ -1617,59 +1677,66 @@ Original request: ${Array.isArray(userPrompt) ? userPrompt.filter((m: any) => m.
     };
   }
 
-  // ── Handle Forge New Snippet (was "Forge New Skill") ──
-  if (parsedSpec.forge_new_skill) {
-    // Normalize: LLM may return a single object or an array of skills
-    const forgePayload = parsedSpec.forge_new_skill;
-    const forgeList: any[] = Array.isArray(forgePayload) ? forgePayload : [forgePayload];
+  // ── Handle Save Skill (FORMAT E) — write SKILL.md, do NOT execute ──
+  if (parsedSpec.save_skill) {
+    const payload = parsedSpec.save_skill;
+    const skillList: any[] = Array.isArray(payload) ? payload : [payload];
+    const savedNames: string[] = [];
 
-    let lastForgedName: string | null = null;
-
-    for (const forge of forgeList) {
-      // Normalize name: LLM may use "name", "skill_name", or omit it
-      const forgeName: string | undefined = forge.name || forge.skill_name;
-      const forgeCode: string | undefined = forge.python_code || forge.code;
-
-      if (!forgeName || !forgeCode) {
-        console.warn('[Maestro] Skipping forge entry with missing name or code:', JSON.stringify(forge).substring(0, 200));
+    for (const s of skillList) {
+      const name: string | undefined = s.name;
+      const description: string = s.description || '';
+      const body: string = s.body || `# ${name}\n\n${description}\n`;
+      if (!name) {
+        console.warn('[Maestro] Skipping save_skill entry with missing name:', JSON.stringify(s).substring(0, 200));
         continue;
       }
+      writeSkill({ name, description, body, metadata: s.metadata, homepage: s.homepage });
+      console.log(`[Maestro] Saved skill playbook: ${name}`);
+      savedNames.push(name);
 
-      writeSnippet(db, {
-        name: forgeName,
-        language: 'python',
-        code: forgeCode,
-        description: forge.description || '',
-        parameters_schema: typeof forge.parameters_schema === 'string'
-          ? forge.parameters_schema
-          : JSON.stringify(forge.parameters_schema || {}),
-        required_vault_keys: forge.required_vault_keys || [],
-      });
-      console.log(`[Maestro] Forged new snippet: ${forgeName}`);
-      saveFactFromForge(db, forgeName, forge.description || '');
-      lastForgedName = forgeName;
+      if (s.vault_secrets && typeof s.vault_secrets === 'object') {
+        const { saveSecret } = await import('./vaultService');
+        for (const [key, value] of Object.entries(s.vault_secrets)) {
+          if (typeof value === 'string' && value.trim()) {
+            // Using key as ID and service_name so it matches the expected Env lookup
+            saveSecret(db, key, key, value.trim());
+            console.log(`[Maestro] Saved vault secret automatically for skill: ${key}`);
+          }
+        }
+      }
     }
 
-    // After forging, execute the last created snippet immediately
-    if (lastForgedName) {
-      parsedSpec.skill_name = lastForgedName;
-    }
+    delete parsedSpec.save_skill;
 
-    // Strip the forge payload so it never leaks raw code to the frontend
-    delete parsedSpec.forge_new_skill;
+    const reply = parsedSpec.conversational_reply
+      || (savedNames.length === 1
+        ? `Skill "${savedNames[0]}" saved. Call it on the next turn to run it.`
+        : `Saved skills: ${savedNames.join(', ')}.`);
+
+    parsedSpec.conversational_reply = reply;
+    parsedSpec.goal = parsedSpec.goal || `Saved skill(s): ${savedNames.join(', ')}`;
+    parsedSpec.steps = [];
+
+    const specId = uuidv4();
+    const conversationId = uuidv4();
+    db.prepare("INSERT INTO Conversations (id, title) VALUES (?, 'Skill Saved')").run(conversationId);
+    db.prepare(`
+      INSERT INTO LivingSpecs (id, conversationId, status, specJson)
+      VALUES (?, ?, 'COMPLETED', ?)
+    `).run(specId, conversationId, JSON.stringify(parsedSpec));
+
+    return {
+      specId,
+      parsedSpec,
+      conversationId,
+      savedSkills: savedNames,
+      conversational_reply: reply,
+    };
   }
 
-  // ── Handle Snippet Execution (was "Skill Execution") ──
-  if (parsedSpec.skill_name) {
-    if (_currentRequestId) emitToolStart(_currentRequestId, 'skill', `Executando skill "${parsedSpec.skill_name}"...`, '⚡');
-    const snippet = readSnippet(db, parsedSpec.skill_name);
-    if (!snippet) throw new Error(`Snippet not found: ${parsedSpec.skill_name}`);
-
-    // Merge snippet's code and vault keys into the spec for execution
-    const vaultKeys = JSON.parse(snippet.required_vault_keys || '[]');
-    parsedSpec.python_script = snippet.code;
-    parsedSpec.required_vault_keys = vaultKeys;
-
+  // ── Handle Skill Task (FORMAT D) — ReAct loop via exec/read_file ──
+  if (parsedSpec.use_skill || parsedSpec.task) {
     const specId = uuidv4();
     const conversationId = uuidv4();
 
@@ -1683,28 +1750,9 @@ Original request: ${Array.isArray(userPrompt) ? userPrompt.filter((m: any) => m.
       specId,
       parsedSpec,
       conversationId,
-      pythonScript: true,
-      skillName: parsedSpec.skill_name,
-      skillArgs: parsedSpec.skill_args || {},
-    };
-  }
-
-  // ── Handle Python execution autonomously (one-off) ──
-  if (parsedSpec.python_script) {
-    const specId = uuidv4();
-    const conversationId = uuidv4();
-
-    db.prepare("INSERT INTO Conversations (id, title) VALUES (?, 'Python Task')").run(conversationId);
-    db.prepare(`
-      INSERT INTO LivingSpecs (id, conversationId, status, specJson, cron_expression, last_run)
-      VALUES (?, ?, 'ACTIVE', ?, ?, NULL)
-    `).run(specId, conversationId, JSON.stringify(parsedSpec), parsedSpec.cron_expression || null);
-
-    return {
-      specId,
-      parsedSpec,
-      conversationId,
-      pythonScript: true,
+      skillTask: true,
+      skillName: parsedSpec.use_skill || null,
+      task: parsedSpec.task || parsedSpec.goal || '',
     };
   }
 
@@ -1728,7 +1776,9 @@ export async function synthesizeTaskResponse(db: any, goal: string, jsonData: an
   const configs = db.prepare('SELECT * FROM ProviderConfigs WHERE id = 1').get();
   if (!configs) throw new Error('Provider configs not found');
 
-  const workerModel = configs.workerModel || 'gemini-2.5-flash';
+  const synthBinding = resolveRole(db, 'synthesizer');
+  const synthModel = synthBinding.model;
+  const synthThinking = resolveThinkLevelForRole(db, 'synthesizer');
 
   let userProfilePrompt = '';
   try {
@@ -1753,248 +1803,37 @@ CRITICAL:
 
   if (requestId) emitResponseStart(requestId);
 
-  // Try streaming first, fallback to non-streaming
-  const result = await _synthesizeWithStreaming(configs, workerModel, systemPrompt, userPromptText, requestId);
+  const fallbackMsg = 'Aqui estão os dados encontrados (erro ao formatar resposta conversacional).';
+  let result: string;
+  try {
+    const provider = getProviderForModel(synthModel);
+    if (provider.chatStream) {
+      result = await chatWithStream({
+        model: synthModel,
+        configs,
+        systemPrompt,
+        messages: [{ role: 'user', content: userPromptText }],
+        maxTokens: 4096,
+        emitResponseChunks: true,
+        thinkingLevel: synthThinking,
+      }, requestId);
+      result = result.trim() || fallbackMsg;
+    } else {
+      const r = await provider.chat({
+        model: synthModel,
+        configs,
+        systemPrompt,
+        messages: [{ role: 'user', content: userPromptText }],
+        maxTokens: 4096,
+        thinkingLevel: synthThinking,
+      });
+      result = (r.content || '').trim() || fallbackMsg;
+    }
+  } catch (e) {
+    console.warn('[Synthesis] failed:', e);
+    result = fallbackMsg;
+  }
 
   if (requestId) emitResponseEnd(requestId);
   return result;
-}
-
-/** Internal: attempt streaming synthesis, fallback to non-streaming */
-async function _synthesizeWithStreaming(configs: any, model: string, systemPrompt: string, userPrompt: string, requestId?: string): Promise<string> {
-  const fallbackMsg = "Aqui estão os dados encontrados (erro ao formatar resposta conversacional).";
-
-  // ── Gemini Streaming ──
-  if (model.includes('gemini')) {
-    try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${configs.googleKey}`;
-      const response = await fetchWithTimeout(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          systemInstruction: { parts: [{ text: systemPrompt }] },
-          contents: [{ parts: [{ text: userPrompt }] }]
-        })
-      });
-      if (!response.ok) return fallbackMsg;
-      return await _consumeSSEStream(response, requestId);
-    } catch (e) {
-      console.warn('[Synthesis] Gemini streaming failed, trying non-streaming:', e);
-      return _synthesizeNonStreaming(configs, model, systemPrompt, userPrompt);
-    }
-  }
-
-  // ── Claude Streaming ──
-  if (model.includes('claude')) {
-    try {
-      const response = await fetchWithTimeout('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': configs.anthropicKey,
-          'anthropic-version': '2023-06-01'
-        },
-        body: JSON.stringify({
-          model, max_tokens: 4096, stream: true,
-          system: systemPrompt,
-          messages: [{ role: 'user', content: userPrompt }]
-        })
-      });
-      if (!response.ok) return fallbackMsg;
-      return await _consumeClaudeStream(response, requestId);
-    } catch (e) {
-      console.warn('[Synthesis] Claude streaming failed, trying non-streaming:', e);
-      return _synthesizeNonStreaming(configs, model, systemPrompt, userPrompt);
-    }
-  }
-
-  // ── OpenAI Streaming ──
-  if (model.includes('gpt') || model.includes('o1') || model.includes('o3')) {
-    try {
-      const response = await fetchWithTimeout('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${configs.openAiKey}`
-        },
-        body: JSON.stringify({
-          model, stream: true,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt }
-          ]
-        })
-      });
-      if (!response.ok) return fallbackMsg;
-      return await _consumeOpenAIStream(response, requestId);
-    } catch (e) {
-      console.warn('[Synthesis] OpenAI streaming failed, trying non-streaming:', e);
-      return _synthesizeNonStreaming(configs, model, systemPrompt, userPrompt);
-    }
-  }
-
-  return "Aqui estão os dados extraídos.";
-}
-
-
-// ── Streaming helpers ──
-
-/** Non-streaming fallback for synthesis */
-async function _synthesizeNonStreaming(configs: any, model: string, systemPrompt: string, userPrompt: string): Promise<string> {
-  const fallbackMsg = "Aqui estão os dados encontrados (erro ao formatar resposta conversacional).";
-
-  if (model.includes('gemini')) {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${configs.googleKey}`;
-    const response = await fetchWithTimeout(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: systemPrompt }] },
-        contents: [{ parts: [{ text: userPrompt }] }]
-      })
-    });
-    if (!response.ok) return fallbackMsg;
-    const data = await response.json();
-    return data.candidates?.[0]?.content?.parts?.[0]?.text || fallbackMsg;
-  }
-
-  if (model.includes('claude')) {
-    const response = await fetchWithTimeout('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': configs.anthropicKey,
-        'anthropic-version': '2023-06-01'
-      },
-      body: JSON.stringify({
-        model, max_tokens: 4096,
-        system: systemPrompt,
-        messages: [{ role: 'user', content: userPrompt }]
-      })
-    });
-    if (!response.ok) return fallbackMsg;
-    const data = await response.json();
-    return data.content?.[0]?.text?.trim() || fallbackMsg;
-  }
-
-  if (model.includes('gpt') || model.includes('o1') || model.includes('o3')) {
-    const response = await fetchWithTimeout('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${configs.openAiKey}`
-      },
-      body: JSON.stringify({
-        model,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt }
-        ]
-      })
-    });
-    if (!response.ok) return fallbackMsg;
-    const data = await response.json();
-    return data.choices?.[0]?.message?.content || fallbackMsg;
-  }
-
-  return fallbackMsg;
-}
-
-/** Consume Gemini SSE stream */
-async function _consumeSSEStream(response: Response, requestId?: string): Promise<string> {
-  let accumulated = '';
-  const reader = response.body?.getReader();
-  if (!reader) return accumulated;
-  const decoder = new TextDecoder();
-  let buffer = '';
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue;
-        const jsonStr = line.slice(6).trim();
-        if (!jsonStr || jsonStr === '[DONE]') continue;
-        try {
-          const parsed = JSON.parse(jsonStr);
-          const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text || '';
-          if (text) {
-            accumulated += text;
-            if (requestId) emitResponseChunk(requestId, text, accumulated);
-          }
-        } catch { /* skip malformed JSON */ }
-      }
-    }
-  } finally { reader.releaseLock(); }
-  return accumulated;
-}
-
-/** Consume Claude SSE stream */
-async function _consumeClaudeStream(response: Response, requestId?: string): Promise<string> {
-  let accumulated = '';
-  const reader = response.body?.getReader();
-  if (!reader) return accumulated;
-  const decoder = new TextDecoder();
-  let buffer = '';
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue;
-        const jsonStr = line.slice(6).trim();
-        if (!jsonStr || jsonStr === '[DONE]') continue;
-        try {
-          const parsed = JSON.parse(jsonStr);
-          if (parsed.type === 'content_block_delta' && parsed.delta?.text) {
-            accumulated += parsed.delta.text;
-            if (requestId) emitResponseChunk(requestId, parsed.delta.text, accumulated);
-          }
-        } catch { /* skip */ }
-      }
-    }
-  } finally { reader.releaseLock(); }
-  return accumulated;
-}
-
-/** Consume OpenAI SSE stream */
-async function _consumeOpenAIStream(response: Response, requestId?: string): Promise<string> {
-  let accumulated = '';
-  const reader = response.body?.getReader();
-  if (!reader) return accumulated;
-  const decoder = new TextDecoder();
-  let buffer = '';
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue;
-        const jsonStr = line.slice(6).trim();
-        if (jsonStr === '[DONE]') continue;
-        if (!jsonStr) continue;
-        try {
-          const parsed = JSON.parse(jsonStr);
-          const text = parsed.choices?.[0]?.delta?.content || '';
-          if (text) {
-            accumulated += text;
-            if (requestId) emitResponseChunk(requestId, text, accumulated);
-          }
-        } catch { /* skip */ }
-      }
-    }
-  } finally { reader.releaseLock(); }
-  return accumulated;
 }

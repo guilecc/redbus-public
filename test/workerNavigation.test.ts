@@ -17,7 +17,10 @@ describe('LLM Service - Tool Calling', () => {
   it('1. Deve formatar corretamente ferramentas para OpenAI', async () => {
     const mockDb = {
       prepare: vi.fn(() => ({
-        get: vi.fn().mockReturnValue({ workerModel: 'gpt-4o', openAiKey: 'sk-test' })
+        get: vi.fn().mockReturnValue({
+          roles: JSON.stringify({ executor: { model: 'gpt-4o', thinkingLevel: 'off' } }),
+          openAiKey: 'sk-test'
+        })
       }))
     };
 
@@ -47,7 +50,10 @@ describe('LLM Service - Tool Calling', () => {
   it('2. Deve formatar corretamente ferramentas para Anthropic', async () => {
     const mockDb = {
       prepare: vi.fn(() => ({
-        get: vi.fn().mockReturnValue({ workerModel: 'claude-3-haiku', anthropicKey: 'ant-test' })
+        get: vi.fn().mockReturnValue({
+          roles: JSON.stringify({ executor: { model: 'claude-3-haiku', thinkingLevel: 'off' } }),
+          anthropicKey: 'ant-test'
+        })
       }))
     };
 

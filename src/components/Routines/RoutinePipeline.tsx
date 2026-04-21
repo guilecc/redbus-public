@@ -2,7 +2,7 @@ import React from 'react';
 
 interface PipelineProps {
   skillName: string | null;
-  pythonScript: boolean;
+  skillTask: boolean;
   steps: Array<{ url: string; instruction: string }>;
 }
 
@@ -22,19 +22,19 @@ const arrowStyle: React.CSSProperties = {
   margin: '0 2px',
 };
 
-export const RoutinePipeline: React.FC<PipelineProps> = ({ skillName, pythonScript, steps }) => {
+export const RoutinePipeline: React.FC<PipelineProps> = ({ skillName, skillTask, steps }) => {
   const boxes: Array<{ label: string; sublabel?: string; color: string }> = [];
 
   // Step 1: Maestro always plans
   boxes.push({ label: 'Maestro', sublabel: 'planeja', color: 'var(--accent)' });
 
   if (skillName) {
-    // Skill-based pipeline
-    boxes.push({ label: 'Forge', sublabel: skillName, color: '#89e051' });
-    boxes.push({ label: 'Python', sublabel: 'exec', color: '#3572A5' });
-  } else if (pythonScript) {
-    // Direct python script
-    boxes.push({ label: 'Python', sublabel: 'exec', color: '#3572A5' });
+    // Skill-based pipeline (ReAct loop over SKILL.md)
+    boxes.push({ label: 'Skill', sublabel: skillName, color: '#89e051' });
+    boxes.push({ label: 'exec', sublabel: 'shell', color: '#3572A5' });
+  } else if (skillTask) {
+    // Ad-hoc shell task
+    boxes.push({ label: 'exec', sublabel: 'shell', color: '#3572A5' });
   } else if (steps.length > 0) {
     // Browser automation pipeline
     for (const step of steps.slice(0, 3)) {

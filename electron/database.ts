@@ -134,6 +134,9 @@ export function initializeDatabase(customPath?: string) {
       role TEXT NOT NULL,
       preferences TEXT,
       system_prompt_compiled TEXT NOT NULL DEFAULT '',
+      professional_name TEXT NOT NULL DEFAULT '',
+      professional_email TEXT NOT NULL DEFAULT '',
+      professional_aliases TEXT NOT NULL DEFAULT '',
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
@@ -148,7 +151,20 @@ export function initializeDatabase(customPath?: string) {
     db.exec(`UPDATE UserProfile SET system_prompt_compiled = '' WHERE system_prompt_compiled IS NULL;`);
   } catch (_) { }
 
-  // Schema 5: ProviderConfigs
+  // Migration: professional identity used by digest addressing analysis
+  try {
+    db.exec(`ALTER TABLE UserProfile ADD COLUMN professional_name TEXT NOT NULL DEFAULT '';`);
+  } catch (_) { }
+  try {
+    db.exec(`ALTER TABLE UserProfile ADD COLUMN professional_email TEXT NOT NULL DEFAULT '';`);
+  } catch (_) { }
+  try {
+    db.exec(`ALTER TABLE UserProfile ADD COLUMN professional_aliases TEXT NOT NULL DEFAULT '';`);
+  } catch (_) { }
+
+  // Schema 5: ProviderConfigs — keys + roles JSON (Spec 06).
+  // The `roles` column is a JSON-encoded Record<RoleName, RoleBinding>. See
+  // electron/services/roles.ts for the resolver and default values.
   db.exec(`
     CREATE TABLE IF NOT EXISTS ProviderConfigs (
       id INTEGER PRIMARY KEY CHECK (id = 1), -- Ensure single row
@@ -158,11 +174,10 @@ export function initializeDatabase(customPath?: string) {
       ollamaUrl TEXT DEFAULT 'http://localhost:11434',
       ollamaCloudKey TEXT,
       ollamaCloudUrl TEXT DEFAULT 'https://api.ollama.com',
-      maestroModel TEXT DEFAULT 'claude-3-7-sonnet-20250219',
-      workerModel TEXT DEFAULT 'gemini-2.5-flash',
+      roles TEXT NOT NULL DEFAULT '{}',
       updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
     );
-    
+
     -- Insert default row if not exists
     INSERT OR IGNORE INTO ProviderConfigs (id) VALUES (1);
   `);
@@ -179,16 +194,13 @@ export function initializeDatabase(customPath?: string) {
     db.exec('ALTER TABLE ProviderConfigs ADD COLUMN ollamaCloudUrl TEXT DEFAULT "https://ollama.com";');
   } catch (e) { }
 
-  // Migrate invalid model name to correct one if user has saved it previously
+  // Migration (Spec 06): add `roles` column to pre-existing ProviderConfigs
+  // tables that were created with the legacy `maestroModel`/`workerModel`
+  // schema. The JSON default is '{}' so resolveRole() routes the user through
+  // onboarding instead of silently picking a hardcoded model.
   try {
-    db.exec(`
-       UPDATE ProviderConfigs 
-       SET maestroModel = 'claude-3-7-sonnet-20250219' 
-       WHERE maestroModel = 'claude-3-5-sonnet-20241022'
-     `);
-  } catch (e) {
-    // Ignore in memory/mock db tests
-  }
+    db.exec(`ALTER TABLE ProviderConfigs ADD COLUMN roles TEXT NOT NULL DEFAULT '{}';`);
+  } catch (e) { }
 
   // Schema 6: ChatMessages — single persistent session history
   ensureMessagesTable(db);
@@ -363,54 +375,20 @@ export function initializeDatabase(customPath?: string) {
     );
   `);
 
-  // Schema 9: SkillLibrary — Self-extending AI tool library (forged by Maestro)
-  // Forge: unified code snippets (absorbs old SkillLibrary)
-  // Stores reusable code in any language, created by Maestro or Workers.
+  // Schema 9: SkillsIndex — Cache of filesystem-backed Skill packages.
+  // The canonical storage is `<userData>/skills/<name>/SKILL.md` on disk.
+  // This table caches frontmatter so the Maestro prompt can be assembled
+  // without re-parsing every SKILL.md on each chat turn.
   db.exec(`
-    CREATE TABLE IF NOT EXISTS ForgeSnippets (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL UNIQUE,
-      language TEXT NOT NULL DEFAULT 'python',
-      code TEXT NOT NULL,
-      description TEXT,
-      tags TEXT DEFAULT '[]',
-      parameters_schema TEXT DEFAULT '{}',
-      required_vault_keys TEXT DEFAULT '[]',
-      version INTEGER NOT NULL DEFAULT 1,
-      use_count INTEGER DEFAULT 0,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      last_used_at DATETIME
+    CREATE TABLE IF NOT EXISTS SkillsIndex (
+      name TEXT PRIMARY KEY,
+      description TEXT NOT NULL,
+      frontmatter_json TEXT NOT NULL,
+      body_path TEXT NOT NULL,
+      mtime_ms INTEGER NOT NULL,
+      indexed_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
   `);
-
-  // Forge: execution history log
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS ForgeExecutions (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      snippet_id INTEGER REFERENCES ForgeSnippets(id),
-      spec_id TEXT,
-      command TEXT NOT NULL,
-      stdout TEXT,
-      stderr TEXT,
-      exit_code INTEGER,
-      duration_ms INTEGER,
-      executed_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
-  `);
-
-  // Migration: Add Forge columns to existing ForgeSnippets tables (pre-consolidation DBs)
-  const forgeColumns = [
-    { col: 'parameters_schema', def: "TEXT DEFAULT '{}'" },
-    { col: 'required_vault_keys', def: "TEXT DEFAULT '[]'" },
-    { col: 'version', def: 'INTEGER NOT NULL DEFAULT 1' },
-  ];
-  for (const { col, def } of forgeColumns) {
-    try {
-      db.exec(`ALTER TABLE ForgeSnippets ADD COLUMN ${col} ${def};`);
-    } catch (e) {
-      // Column already exists — ignore
-    }
-  }
 
   // --- NATIVE SYSTEM SKILLS ---
   // Note: search_meetings_advanced was removed as native search is handled by dedicated FORMAT H.
@@ -516,6 +494,34 @@ export function initializeDatabase(customPath?: string) {
     );
   `);
 
+  // Schema 15: RawCommunications — Spec 11 Microsoft Graph ingest (mail + teams)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS RawCommunications (
+      id TEXT PRIMARY KEY,
+      graph_id TEXT UNIQUE NOT NULL,
+      source TEXT NOT NULL CHECK(source IN ('outlook','teams')),
+      sender TEXT NOT NULL,
+      sender_email TEXT,
+      subject TEXT,
+      channel_name TEXT,
+      plain_text TEXT NOT NULL,
+      timestamp TEXT NOT NULL,
+      is_unread INTEGER DEFAULT 0,
+      web_link TEXT,
+      importance TEXT,
+      mentions_me INTEGER DEFAULT 0,
+      ingested_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+  try { db.exec(`CREATE INDEX IF NOT EXISTS idx_rawcomms_ts ON RawCommunications(timestamp DESC);`); } catch { }
+  try { db.exec(`CREATE INDEX IF NOT EXISTS idx_rawcomms_source_ts ON RawCommunications(source, timestamp DESC);`); } catch { }
+
+  // Migration: thread_id (outlook conversationId) + group_id (teams chatId)
+  try { db.exec(`ALTER TABLE RawCommunications ADD COLUMN thread_id TEXT;`); } catch { }
+  try { db.exec(`ALTER TABLE RawCommunications ADD COLUMN group_id TEXT;`); } catch { }
+  try { db.exec(`CREATE INDEX IF NOT EXISTS idx_rawcomms_thread ON RawCommunications(thread_id);`); } catch { }
+  try { db.exec(`CREATE INDEX IF NOT EXISTS idx_rawcomms_group ON RawCommunications(group_id);`); } catch { }
+
   return db;
 }
 
@@ -574,13 +580,7 @@ export function cleanupOldMemories(db: ReturnType<typeof Database>): number {
     totalDeleted += r3.changes;
   } catch (_) { }
 
-  // 4. ForgeExecutions — old forge execution logs (Technical logs)
-  try {
-    const r4 = db.prepare(`DELETE FROM ForgeExecutions WHERE executed_at < datetime('now', '-${days} days')`).run();
-    totalDeleted += r4.changes;
-  } catch (_) { }
-
-  // 5. MeetingMemory — meeting transcripts are kept (MemPalace)
+  // 4. MeetingMemory — meeting transcripts are kept (MemPalace)
 
   // VACUUM — reclaim disk space
   if (totalDeleted > 0) {
@@ -596,22 +596,27 @@ export function cleanupOldMemories(db: ReturnType<typeof Database>): number {
 }
 
 /**
- * Factory Reset: Wipe all user data (Alma, messages, specs, memory) but PRESERVE API keys.
- * Also deletes archive .sqlite files from disk.
+ * Factory Reset: wipe every table that holds user-authored or user-derived data,
+ * including API keys and role bindings in ProviderConfigs. After this call the
+ * app should be indistinguishable from a fresh install — the next boot lands
+ * back in the onboarding wizard (Spec 08). Archive sqlite files and
+ * filesystem-backed Skill packages are also deleted from disk.
  */
 export function factoryReset(db: ReturnType<typeof Database>, userDataPath: string): void {
   // Disable FK constraints during reset to avoid ordering issues
   db.pragma('foreign_keys = OFF');
 
-  // Wipe tables that hold user identity, conversation, and memory data
+  // Wipe tables that hold user identity, conversation, memory, tasks, and
+  // provider credentials. ProviderConfigs keeps its single pinned row but has
+  // every field reset to default so the `CHECK (id = 1)` invariant holds.
   db.exec(`
     DELETE FROM RoutineExecutions;
-    DELETE FROM ForgeExecutions;
-    DELETE FROM ForgeSnippets;
+    DELETE FROM SkillsIndex;
     DELETE FROM ChatMessages;
     DELETE FROM LivingSpecs;
     DELETE FROM Conversations;
     DELETE FROM UserProfile;
+    DELETE FROM UserConfig;
     DELETE FROM EmbeddingsMemory;
     DELETE FROM VectorMemory;
     DELETE FROM MemoryFacts;
@@ -623,9 +628,21 @@ export function factoryReset(db: ReturnType<typeof Database>, userDataPath: stri
     DELETE FROM ScreenMemory;
     DELETE FROM MeetingMemory;
     DELETE FROM CommunicationDigest;
+    DELETE FROM RawCommunications;
     DELETE FROM SecureVault;
     DELETE FROM ActivityLog;
     DELETE FROM AppSettings;
+    DELETE FROM Todos;
+    UPDATE ProviderConfigs SET
+      openAiKey = NULL,
+      anthropicKey = NULL,
+      googleKey = NULL,
+      ollamaUrl = 'http://localhost:11434',
+      ollamaCloudKey = NULL,
+      ollamaCloudUrl = 'https://api.ollama.com',
+      roles = '{}',
+      updatedAt = CURRENT_TIMESTAMP
+    WHERE id = 1;
     UPDATE ConversationSummary SET summary = '', lastCompactedAt = NULL, updatedAt = CURRENT_TIMESTAMP WHERE id = 1;
   `);
 
@@ -639,5 +656,11 @@ export function factoryReset(db: ReturnType<typeof Database>, userDataPath: stri
     for (const file of files) {
       fs.unlinkSync(path.join(archivesDir, file));
     }
+  }
+
+  // Delete filesystem-backed Skill packages
+  const skillsDir = path.join(userDataPath, 'skills');
+  if (fs.existsSync(skillsDir)) {
+    fs.rmSync(skillsDir, { recursive: true, force: true });
   }
 }

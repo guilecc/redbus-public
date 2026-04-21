@@ -15,6 +15,83 @@ export interface Translations {
     ptBR: { name: string; desc: string };
   };
 
+  onboarding: {
+    shellTitle: string;
+    stepLabel: (current: number, total: number) => string;
+    back: string;
+    next: string;
+    skip: string;
+    finish: string;
+    welcome: {
+      headline: string;
+      body: string;
+      privacy: string;
+      local: string;
+      cta: string;
+    };
+    providers: {
+      title: string;
+      subtitle: string;
+      openai: string;
+      anthropic: string;
+      google: string;
+      ollamaCloud: string;
+      test: string;
+      testing: string;
+      valid: string;
+      invalid: string;
+      noneWarning: string;
+      ollamaDetected: (n: number) => string;
+      ollamaMissing: string;
+    };
+    ollama: {
+      title: string;
+      subtitle: string;
+      urlLabel: string;
+      online: string;
+      offline: string;
+      checking: string;
+      detectedModels: (n: number) => string;
+      noModelsHint: string;
+      recheck: string;
+      rechecking: string;
+      install: string;
+      installHint: string;
+      remoteHint: string;
+    };
+    roles: {
+      title: string;
+      subtitle: string;
+      recommended: string;
+      auto: string;
+      manual: string;
+      modelFor: (role: string) => string;
+      noModelAvailable: string;
+      setupIncomplete: string;
+    };
+    profile: {
+      title: string;
+      subtitle: string;
+      nameLabel: string;
+      namePlaceholder: string;
+      emailLabel: string;
+      emailPlaceholder: string;
+      aliasesLabel: string;
+      aliasesPlaceholder: string;
+      aliasesHint: string;
+      hint: string;
+      incomplete: string;
+    };
+    review: {
+      title: string;
+      subtitle: string;
+      rolesHeading: string;
+      keysHeading: string;
+      ready: string;
+      profileHeading: string;
+    };
+  };
+
   settings: {
     title: string;
     tabs: {
@@ -22,6 +99,7 @@ export interface Translations {
       vault: string;
       audio: string;
       proactivity: string;
+      digest: string;
       system: string;
     };
 
@@ -31,11 +109,21 @@ export interface Translations {
       apiKeys: string;
       orchestration: string;
       orchestrationDesc: string;
-      maestroModel: string;
-      workerModel: string;
       save: string;
       saving: string;
       check: string;
+      roles: {
+        title: string;
+        simpleMode: string;
+        advancedMode: string;
+        copyPlannerToAll: string;
+        resetDefaults: string;
+        planner: { name: string; description: string };
+        executor: { name: string; description: string };
+        synthesizer: { name: string; description: string };
+        utility: { name: string; description: string };
+        digest: { name: string; description: string };
+      };
     };
 
     ollama: {
@@ -101,6 +189,43 @@ export interface Translations {
       currentLevel: string;
     };
 
+    digest: {
+      title: string;
+      subtitle: string;
+      save: string;
+      saving: string;
+      saved: string;
+      resetDefaults: string;
+      noise: {
+        title: string;
+        desc: string;
+        dropAcks: string;
+        dropAcksDesc: string;
+        minLength: string;
+        minLengthDesc: string;
+        customAckPatterns: string;
+        customAckPatternsDesc: string;
+        customAckPatternsPlaceholder: string;
+      };
+      signal: {
+        title: string;
+        desc: string;
+        signalLength: string;
+        signalLengthDesc: string;
+        alwaysSignalHint: string;
+      };
+      thread: {
+        title: string;
+        desc: string;
+        neutralCap: string;
+        neutralCapDesc: string;
+        alwaysKeepFirst: string;
+        alwaysKeepFirstDesc: string;
+        alwaysKeepLast: string;
+        alwaysKeepLastDesc: string;
+      };
+    };
+
     system: {
       title: string;
       subtitle: string;
@@ -124,6 +249,9 @@ export interface Translations {
       factoryReset: string;
       factoryResetDesc: string;
       reset: string;
+      resetSetup: string;
+      resetSetupDesc: string;
+      resetSetupBtn: string;
     };
   };
 
@@ -206,7 +334,7 @@ const en: Translations = {
   app: {
     loading: 'initializing redbus...',
     processing: 'processing...',
-    greeting: 'RedBus system initialized. No profile found. Tell me: who are you, and what will be my role and my name?',
+    greeting: "Hello! It's great to have you here. It looks like we haven't been properly introduced yet. What should I call you, and what should be my name and mission?",
   },
 
   langSetup: {
@@ -216,7 +344,84 @@ const en: Translations = {
     divider: 'choose your language to get started',
     footnote: 'This choice affects how memories are stored and how the AI communicates with you. You can change it later in Settings, but starting fresh is recommended.',
     en: { name: 'English', desc: 'The AI will respond in English' },
-    ptBR: { name: 'Português (BR)', desc: 'A IA vai responder em Português do Brasil' },
+    ptBR: { name: 'Português (BR)', desc: 'The AI will respond in Brazilian Portuguese' },
+  },
+
+  onboarding: {
+    shellTitle: 'redbus setup',
+    stepLabel: (c, total) => `step ${c} of ${total}`,
+    back: 'back',
+    next: 'next',
+    skip: 'skip',
+    finish: 'finish setup',
+    welcome: {
+      headline: 'welcome to redbus',
+      body: 'before we start, we need to connect at least one LLM provider and bind semantic roles (planner, executor, synthesizer, utility). Nothing will run until setup is complete.',
+      privacy: 'API keys are stored locally using OS-native encryption.',
+      local: 'You can also run 100% local via Ollama.',
+      cta: 'begin',
+    },
+    providers: {
+      title: 'llm providers',
+      subtitle: 'paste any API keys you want to use. You can add or remove providers later.',
+      openai: 'OpenAI (GPT / o-series)',
+      anthropic: 'Anthropic (Claude)',
+      google: 'Google (Gemini)',
+      ollamaCloud: 'Ollama Cloud',
+      test: 'check',
+      testing: 'checking...',
+      valid: 'ok',
+      invalid: 'invalid',
+      noneWarning: 'Add at least one API key, or install / start Ollama on the next step.',
+      ollamaDetected: (n) => `Ollama detected · ${n} local model(s) ready`,
+      ollamaMissing: 'Ollama not reachable — configure a server or install it on the next step.',
+    },
+    ollama: {
+      title: 'ollama (local or remote)',
+      subtitle: 'run models locally for full privacy, or point to a remote Ollama server on your network.',
+      urlLabel: 'Ollama API URL',
+      online: 'online',
+      offline: 'offline',
+      checking: 'checking...',
+      detectedModels: (n) => `${n} model(s) detected`,
+      noModelsHint: 'No local models yet. Run `ollama pull llama3.2` or similar, then recheck.',
+      recheck: 'recheck',
+      rechecking: 'rechecking...',
+      install: 'install ollama',
+      installHint: 'Ollama is not running at this URL. Install it from ollama.com and start the service, or change the URL above to a reachable server.',
+      remoteHint: 'You can also point to a remote Ollama server — just paste its URL above (e.g. http://192.168.1.10:11434).',
+    },
+    roles: {
+      title: 'roles',
+      subtitle: 'each semantic role needs a model. We pick sensible defaults — you can override any of them.',
+      recommended: 'recommended',
+      auto: 'auto (recommended)',
+      manual: 'manual',
+      modelFor: (role) => `model for ${role}`,
+      noModelAvailable: 'no reachable model — add a provider key or a local Ollama model.',
+      setupIncomplete: 'all four roles need a model before you can finish.',
+    },
+    profile: {
+      title: 'your professional identity',
+      subtitle: 'used by the digest to detect messages actually addressed to you (cc/mentions/subject/body).',
+      nameLabel: 'Full professional name',
+      namePlaceholder: 'e.g. Guilherme Cardoso',
+      emailLabel: 'Work email',
+      emailPlaceholder: 'e.g. guilherme@company.com',
+      aliasesLabel: 'Nicknames / aliases',
+      aliasesPlaceholder: 'e.g. Gui, Guile, G. Cardoso',
+      aliasesHint: 'comma-separated. Any short form or variation you are called by in emails or Teams chats. Optional, but improves addressing detection.',
+      hint: 'stored locally. Used only to steer the digest LLM prompt; never sent standalone.',
+      incomplete: 'name and email are required to continue.',
+    },
+    review: {
+      title: 'review',
+      subtitle: 'everything looks good? Finishing setup will unlock the chat.',
+      rolesHeading: 'role bindings',
+      keysHeading: 'providers connected',
+      ready: 'ready to go',
+      profileHeading: 'professional identity',
+    },
   },
 
   settings: {
@@ -226,20 +431,31 @@ const en: Translations = {
       vault: 'Vault',
       audio: 'Audio',
       proactivity: 'Proactivity',
+      digest: 'Digest',
       system: 'System',
     },
 
     llm: {
       title: 'LLM & Models',
-      subtitle: 'API keys and maestro/worker orchestration',
+      subtitle: 'API keys and named roles per call site',
       apiKeys: 'api keys',
-      orchestration: 'orchestration',
-      orchestrationDesc: 'Flexible roles for Maestro (planner) and Worker (executor). Surgical updates optimize token surgical strikes and context health.',
-      maestroModel: 'maestro model',
-      workerModel: 'worker model',
+      orchestration: 'roles',
+      orchestrationDesc: 'Each call site picks a semantic role. Point every role at the right model for your budget and latency needs.',
       save: 'save',
       saving: 'saving...',
       check: 'check',
+      roles: {
+        title: 'Roles',
+        simpleMode: 'Simple (1 model for all)',
+        advancedMode: 'Advanced (per role)',
+        copyPlannerToAll: 'Copy planner to all',
+        resetDefaults: 'Reset defaults',
+        planner: { name: 'Planner', description: 'Decides the next step. Use a strong reasoning model.' },
+        executor: { name: 'Executor', description: 'Executes tasks with tools (browser, filesystem). Prefer speed.' },
+        synthesizer: { name: 'Synthesizer', description: 'Converts technical output into a natural response.' },
+        utility: { name: 'Utility', description: 'Internal tasks (memory, briefings, analyses).' },
+        digest: { name: 'Digest', description: 'Bulk summarization of emails/chats. Prefer a local model (Ollama) to save tokens and handle high message volume at zero cost.' },
+      },
     },
 
     ollama: {
@@ -305,6 +521,43 @@ const en: Translations = {
       currentLevel: 'current level',
     },
 
+    digest: {
+      title: 'Daily Digest',
+      subtitle: 'how the daily communications digest curates messages before sending them to the LLM. Tighter settings = fewer tokens, more local-model friendly; looser settings = more context, higher cost.',
+      save: 'save',
+      saving: 'saving…',
+      saved: 'saved',
+      resetDefaults: 'reset to defaults',
+      noise: {
+        title: 'Noise filter',
+        desc: 'drops trivial messages (acknowledgments, emoji-only, very short replies) before they reach the LLM.',
+        dropAcks: 'drop acknowledgments',
+        dropAcksDesc: 'dropping messages that are just "ok", "thanks", "got it", "valeu", "obrigado", etc. Built-in list covers EN + PT-BR.',
+        minLength: 'minimum length (chars)',
+        minLengthDesc: 'neutral messages shorter than this (after removing emoji) are treated as noise. Messages with questions, mentions, URLs or high importance are always kept regardless of length.',
+        customAckPatterns: 'custom noise phrases',
+        customAckPatternsDesc: 'comma-separated extra phrases to drop. Matches the full message (case-insensitive, trailing punctuation allowed). Useful for team-specific fillers ("rgr", "copy that", "pode crer").',
+        customAckPatternsPlaceholder: 'e.g. rgr, pode crer, roger',
+      },
+      signal: {
+        title: 'Signal preservation',
+        desc: 'these messages are ALWAYS kept, even inside a large thread — they carry real information.',
+        signalLength: 'signal length (chars)',
+        signalLengthDesc: 'messages longer than this are auto-promoted to signal and never deduplicated.',
+        alwaysSignalHint: 'Always kept regardless of length: importance = high · @mentions of you · messages with a question (?) · URLs · @handle mentions.',
+      },
+      thread: {
+        title: 'Thread grouping',
+        desc: 'for messages that are neither noise nor signal ("neutral" chatter), cap how many survive per thread/chat.',
+        neutralCap: 'max neutral messages per thread',
+        neutralCapDesc: 'after noise/signal filtering, if a thread still has more neutral messages than this cap, keep only the boundary ones (first + last + evenly spaced) to preserve the arc without bloating the prompt.',
+        alwaysKeepFirst: 'always keep the thread opener',
+        alwaysKeepFirstDesc: 'the oldest message of each thread is preserved even if classified as noise — useful to remember the thread existed at all.',
+        alwaysKeepLast: 'always keep the latest message',
+        alwaysKeepLastDesc: 'the newest message of each thread is preserved so the digest reflects the current state of the conversation.',
+      },
+    },
+
     system: {
       title: 'System',
       subtitle: 'data governance, retention and maintenance',
@@ -328,6 +581,9 @@ const en: Translations = {
       factoryReset: 'factory reset redbus',
       factoryResetDesc: 'deletes soul, memory and history. preserves API keys.',
       reset: 'reset',
+      resetSetup: 'reset onboarding setup',
+      resetSetupDesc: 'returns to the first-launch setup wizard. API keys stay, but role bindings are cleared.',
+      resetSetupBtn: 'reset setup',
     },
   },
 
@@ -335,8 +591,8 @@ const en: Translations = {
     reset: {
       title: 'confirm factory reset',
       body: 'this action will permanently delete:',
-      items: ['soul (user profile)', 'all message history', 'living specs and vector memory', 'history files'],
-      keysPreserved: 'your API keys will be preserved',
+      items: ['soul, profile, notes and todos', 'all message history and memories', 'API keys and role bindings', 'archive files, skills and app settings'],
+      keysPreserved: 'this will send you back to the onboarding wizard',
       typeToConfirm: 'type',
       confirmWord: 'RESET',
       toConfirm: 'to confirm',

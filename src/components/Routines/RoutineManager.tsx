@@ -15,7 +15,7 @@ interface RoutineEntry {
   last_duration_ms: number | null;
   timezone: string;
   skill_name: string | null;
-  python_script: boolean;
+  skill_task: boolean;
   steps: Array<{ url: string; instruction: string }>;
 }
 
@@ -81,7 +81,7 @@ export const RoutineManager: React.FC = () => {
             <RefreshCw size={11} />
           </button>
         </div>
-        
+
         <div className="view-sidebar-list" data-testid="routine-list">
           {loading && (
             <p className="view-empty" style={{ textAlign: 'center', marginTop: '20px' }}>carregando...</p>

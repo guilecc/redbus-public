@@ -15,4 +15,17 @@ import { vi } from 'vitest';
   getRecentActivityLogs: vi.fn().mockResolvedValue({ status: 'OK', data: [] }),
   clearActivityLogs: vi.fn().mockResolvedValue({ status: 'OK' }),
   onActivityLogEntry: vi.fn(),
+  // TitleBar / sensor toggles
+  getSensorStatuses: vi.fn().mockResolvedValue({ status: 'OK', data: [] }),
+  toggleSensor: vi.fn().mockResolvedValue({ status: 'OK' }),
+  getAppSetting: vi.fn().mockResolvedValue({ status: 'OK', data: null }),
+  getProactivityLevel: vi.fn().mockResolvedValue({ status: 'OK', data: 'MEDIUM' }),
+  setProactivityLevel: vi.fn().mockResolvedValue({ status: 'OK' }),
+  getWindowPlatform: vi.fn().mockResolvedValue({ status: 'OK', data: 'darwin' }),
+  isWindowMaximized: vi.fn().mockResolvedValue({ status: 'OK', data: false }),
+  minimizeWindow: vi.fn().mockResolvedValue({ status: 'OK' }),
+  maximizeWindow: vi.fn().mockResolvedValue({ status: 'OK' }),
+  closeWindow: vi.fn().mockResolvedValue({ status: 'OK' }),
+  openWidget: vi.fn().mockResolvedValue({ status: 'OK' }),
+  closeWidget: vi.fn().mockResolvedValue({ status: 'OK' }),
 };

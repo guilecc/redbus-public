@@ -2,6 +2,28 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createSpecFromPrompt, setAgentState } from '../electron/services/orchestratorService';
 import { getMessages, countMessages, getUncompactedMessages } from '../electron/services/archiveService';
 
+// Builds a Response-like object whose `body` streams Claude SSE lines that
+// `parseClaudeStream` will concatenate into the given `text` payload.
+function mockClaudeStreamResponse(text: string): any {
+  const sse = `data: ${JSON.stringify({ type: 'content_block_delta', delta: { type: 'text_delta', text } })}\n\ndata: [DONE]\n\n`;
+  const bytes = new TextEncoder().encode(sse);
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(bytes);
+      controller.close();
+    },
+  });
+  return { ok: true, status: 200, statusText: 'OK', body, text: async () => sse };
+}
+
+// Helpers for Spec 06 — named roles in the `roles` JSON column
+const CLAUDE_ROLES_JSON = JSON.stringify({
+  planner: { model: 'claude-3-7-sonnet-20250219', thinkingLevel: 'medium' },
+});
+const GEMINI_ROLES_JSON = JSON.stringify({
+  planner: { model: 'gemini-2.5-flash', thinkingLevel: 'off' },
+});
+
 describe('Orchestrator Service - Maestro', () => {
 
   const originalFetch = global.fetch;
@@ -23,7 +45,7 @@ describe('Orchestrator Service - Maestro', () => {
           get: vi.fn().mockImplementation(() => {
             if (query.includes('ProviderConfigs')) {
               return {
-                maestroModel: 'claude-3-7-sonnet-20250219',
+                roles: CLAUDE_ROLES_JSON,
                 anthropicKey: 'ant-test-key'
               };
             }
@@ -54,16 +76,9 @@ describe('Orchestrator Service - Maestro', () => {
       ]
     };
 
-    const mockFetchResponse = {
-      ok: true,
-      json: async () => ({
-        content: [
-          { text: '```json\n' + JSON.stringify(fakeSpec) + '\n```' }
-        ]
-      })
-    };
-
-    (global.fetch as any).mockResolvedValue(mockFetchResponse);
+    (global.fetch as any).mockResolvedValue(
+      mockClaudeStreamResponse('```json\n' + JSON.stringify(fakeSpec) + '\n```')
+    );
 
     const result = await createSpecFromPrompt(mockDb, 'Check my jira every weekday at 9am');
 
@@ -84,7 +99,7 @@ describe('Orchestrator Service - Maestro', () => {
           get: vi.fn().mockImplementation(() => {
             if (query.includes('ProviderConfigs')) {
               return {
-                maestroModel: 'claude-3-7-sonnet-20250219',
+                roles: CLAUDE_ROLES_JSON,
                 anthropicKey: 'ant-test-key'
               };
             }
@@ -104,16 +119,9 @@ describe('Orchestrator Service - Maestro', () => {
       finalize_soul_setup: null
     };
 
-    const mockFetchResponse = {
-      ok: true,
-      json: async () => ({
-        content: [
-          { text: '```json\n' + JSON.stringify(onboardingSpec) + '\n```' }
-        ]
-      })
-    };
-
-    (global.fetch as any).mockResolvedValue(mockFetchResponse);
+    (global.fetch as any).mockResolvedValue(
+      mockClaudeStreamResponse('```json\n' + JSON.stringify(onboardingSpec) + '\n```')
+    );
 
     const result = await createSpecFromPrompt(mockDb, 'Oi');
 
@@ -130,7 +138,7 @@ describe('Orchestrator Service - Maestro', () => {
 
     try {
       // Configura provider para o maestro funcionar
-      db.prepare(`UPDATE ProviderConfigs SET anthropicKey = 'ant-test', maestroModel = 'claude-3-7-sonnet-20250219' WHERE id = 1`).run();
+      db.prepare(`UPDATE ProviderConfigs SET anthropicKey = 'ant-test', roles = ? WHERE id = 1`).run(CLAUDE_ROLES_JSON);
       db.prepare(`INSERT OR REPLACE INTO UserProfile (id, name, role, preferences, system_prompt_compiled) VALUES ('default', 'Test', 'Dev', '', 'Be helpful.')`).run();
 
       // Simula persistência do user prompt (feito pelo frontend)
@@ -142,10 +150,9 @@ describe('Orchestrator Service - Maestro', () => {
         cron_expression: null,
         steps: [{ url: "https://jira.com", instruction: "Extract data" }]
       };
-      (global.fetch as any).mockResolvedValue({
-        ok: true,
-        json: async () => ({ content: [{ text: JSON.stringify(fakeSpec) }] })
-      });
+      (global.fetch as any).mockResolvedValue(
+        mockClaudeStreamResponse(JSON.stringify(fakeSpec))
+      );
 
       const result = await createSpecFromPrompt(db, 'Verifique o Jira');
 
@@ -181,7 +188,7 @@ describe('Orchestrator Service - Maestro', () => {
     const db = initializeDatabase(':memory:');
 
     try {
-      db.prepare(`UPDATE ProviderConfigs SET anthropicKey = 'ant-test', maestroModel = 'claude-3-7-sonnet-20250219' WHERE id = 1`).run();
+      db.prepare(`UPDATE ProviderConfigs SET anthropicKey = 'ant-test', roles = ? WHERE id = 1`).run(CLAUDE_ROLES_JSON);
       db.prepare(`INSERT OR REPLACE INTO UserProfile (id, name, role, preferences, system_prompt_compiled) VALUES ('default', 'Test', 'Dev', '', 'Be helpful.')`).run();
 
       const fakeSpec = {
@@ -192,10 +199,9 @@ describe('Orchestrator Service - Maestro', () => {
         steps: []
       };
 
-      (global.fetch as any).mockResolvedValue({
-        ok: true,
-        json: async () => ({ content: [{ text: JSON.stringify(fakeSpec) }] })
-      });
+      (global.fetch as any).mockResolvedValue(
+        mockClaudeStreamResponse(JSON.stringify(fakeSpec))
+      );
 
       const consoleSpy = vi.spyOn(console, 'log');
       const result = await createSpecFromPrompt(db, 'Qual o clima em São Paulo?');
@@ -240,7 +246,7 @@ describe('Orchestrator Service - Maestro', () => {
     const db = initializeDatabase(':memory:');
 
     try {
-      db.prepare(`UPDATE ProviderConfigs SET anthropicKey = 'ant-test', maestroModel = 'claude-3-7-sonnet-20250219' WHERE id = 1`).run();
+      db.prepare(`UPDATE ProviderConfigs SET anthropicKey = 'ant-test', roles = ? WHERE id = 1`).run(CLAUDE_ROLES_JSON);
       db.prepare(`INSERT OR REPLACE INTO UserProfile (id, name, role, preferences, system_prompt_compiled) VALUES ('default', 'Test', 'Dev', '', 'Be helpful.')`).run();
 
       const fakeSpec = {
@@ -250,10 +256,9 @@ describe('Orchestrator Service - Maestro', () => {
         steps: []
       };
 
-      (global.fetch as any).mockResolvedValue({
-        ok: true,
-        json: async () => ({ content: [{ text: JSON.stringify(fakeSpec) }] })
-      });
+      (global.fetch as any).mockResolvedValue(
+        mockClaudeStreamResponse(JSON.stringify(fakeSpec))
+      );
 
       const result = await createSpecFromPrompt(db, 'Obrigado!');
 
@@ -272,7 +277,7 @@ describe('Orchestrator Service - Maestro', () => {
   // TESTE REAL COM GOOGLE API (E2E — Gemini)
   // ══════════════════════════════════════════════════════════
 
-  it('6. E2E: Deve chamar Gemini real e retornar spec válido (FORMAT C conversacional)', async () => {
+  it.skipIf(!process.env.GOOGLE_API_KEY || process.env.GOOGLE_API_KEY === 'REDACTED_API_KEY')('6. E2E: Deve chamar Gemini real e retornar spec válido (FORMAT C conversacional)', async () => {
     const GOOGLE_KEY = process.env.GOOGLE_API_KEY || 'REDACTED_API_KEY';
     // Use real DB
     const { initializeDatabase } = await import('../electron/database');
@@ -283,7 +288,7 @@ describe('Orchestrator Service - Maestro', () => {
       INSERT OR REPLACE INTO UserProfile (id, name, role, preferences, system_prompt_compiled)
       VALUES ('default', 'Guile', 'dev', 'conciso', 'Você é o RedBus, assistente de produtividade. Responda em português de forma concisa.')
     `).run();
-    db.prepare(`UPDATE ProviderConfigs SET maestroModel = 'gemini-2.5-flash', googleKey = ? WHERE id = 1`).run(GOOGLE_KEY);
+    db.prepare(`UPDATE ProviderConfigs SET roles = ?, googleKey = ? WHERE id = 1`).run(GEMINI_ROLES_JSON, GOOGLE_KEY);
 
     // Use real fetch (not mocked)
     global.fetch = originalFetch;
@@ -302,7 +307,7 @@ describe('Orchestrator Service - Maestro', () => {
     }
   }, 30000); // 30s timeout for real API call
 
-  it('7. Anti-loop: mensagens duplicadas devem ser removidas do contexto LLM', async () => {
+  it.skipIf(!process.env.GOOGLE_API_KEY || process.env.GOOGLE_API_KEY === 'REDACTED_API_KEY')('7. Anti-loop: mensagens duplicadas devem ser removidas do contexto LLM', async () => {
     const GOOGLE_KEY = process.env.GOOGLE_API_KEY || 'REDACTED_API_KEY';
     const { initializeDatabase } = await import('../electron/database');
     const { saveMessage } = await import('../electron/services/archiveService');
@@ -312,7 +317,7 @@ describe('Orchestrator Service - Maestro', () => {
       INSERT OR REPLACE INTO UserProfile (id, name, role, preferences, system_prompt_compiled)
       VALUES ('default', 'Guile', 'dev', 'conciso', 'Você é o RedBus. Responda em português.')
     `).run();
-    db.prepare(`UPDATE ProviderConfigs SET maestroModel = 'gemini-2.5-flash', googleKey = ? WHERE id = 1`).run('REDACTED_API_KEY');
+    db.prepare(`UPDATE ProviderConfigs SET roles = ?, googleKey = ? WHERE id = 1`).run(GEMINI_ROLES_JSON, 'REDACTED_API_KEY');
 
     // Simulate loop: 5 identical error messages from assistant
     const errorMsg = 'O sensor de acessibilidade não está disponível neste build.';
@@ -346,7 +351,7 @@ describe('Orchestrator Service - Maestro', () => {
     const db = initializeDatabase(':memory:');
 
     try {
-      db.prepare(`UPDATE ProviderConfigs SET anthropicKey = 'ant-test', maestroModel = 'claude-3-7-sonnet-20250219' WHERE id = 1`).run();
+      db.prepare(`UPDATE ProviderConfigs SET anthropicKey = 'ant-test', roles = ? WHERE id = 1`).run(CLAUDE_ROLES_JSON);
       db.prepare(`INSERT OR REPLACE INTO UserProfile (id, name, role, preferences, system_prompt_compiled) VALUES ('default', 'Test', 'Dev', '', 'Be helpful.')`).run();
 
       // LLM returns create_todos (batch)
@@ -361,10 +366,9 @@ describe('Orchestrator Service - Maestro', () => {
         steps: [],
       };
 
-      (global.fetch as any).mockResolvedValue({
-        ok: true,
-        json: async () => ({ content: [{ text: JSON.stringify(fakeSpec) }] }),
-      });
+      (global.fetch as any).mockResolvedValue(
+        mockClaudeStreamResponse(JSON.stringify(fakeSpec))
+      );
 
       const result = await createSpecFromPrompt(db, 'Crie os seguintes to-dos: Acertar alocação do Woody / Aumento do Guilherme / Fechar custo Embraer');
 
@@ -405,7 +409,7 @@ describe('Orchestrator Service - Maestro', () => {
     const db = initializeDatabase(':memory:');
 
     try {
-      db.prepare(`UPDATE ProviderConfigs SET anthropicKey = 'ant-test', maestroModel = 'claude-3-7-sonnet-20250219' WHERE id = 1`).run();
+      db.prepare(`UPDATE ProviderConfigs SET anthropicKey = 'ant-test', roles = ? WHERE id = 1`).run(CLAUDE_ROLES_JSON);
       db.prepare(`INSERT OR REPLACE INTO UserProfile (id, name, role, preferences, system_prompt_compiled) VALUES ('default', 'Test', 'Dev', '', 'Be helpful.')`).run();
 
       // LLM uses deprecated singular form (backward compat)
@@ -416,10 +420,9 @@ describe('Orchestrator Service - Maestro', () => {
         steps: [],
       };
 
-      (global.fetch as any).mockResolvedValue({
-        ok: true,
-        json: async () => ({ content: [{ text: JSON.stringify(fakeSpec) }] }),
-      });
+      (global.fetch as any).mockResolvedValue(
+        mockClaudeStreamResponse(JSON.stringify(fakeSpec))
+      );
 
       const result = await createSpecFromPrompt(db, 'Me lembra de revisar o relatório mensal');
 
@@ -429,6 +432,61 @@ describe('Orchestrator Service - Maestro', () => {
       const todos = db.prepare('SELECT * FROM Todos').all() as any[];
       expect(todos).toHaveLength(1);
       expect(todos[0].content).toBe('Revisar relatório mensal');
+    } finally {
+      db.close();
+    }
+  });
+
+  it('10. Thinking level: setting "high" deve injetar thinking.budget_tokens no body da Anthropic', async () => {
+    vi.mock('electron', () => ({ app: { getPath: vi.fn(() => '') } }));
+    const { initializeDatabase } = await import('../electron/database');
+    const { THINKING_BUDGETS } = await import('../electron/services/thinking');
+    const db = initializeDatabase(':memory:');
+
+    try {
+      const rolesHigh = JSON.stringify({ planner: { model: 'claude-3-7-sonnet-20250219', thinkingLevel: 'high' } });
+      db.prepare(`UPDATE ProviderConfigs SET anthropicKey = 'ant-test', roles = ? WHERE id = 1`).run(rolesHigh);
+      db.prepare(`INSERT OR REPLACE INTO UserProfile (id, name, role, preferences, system_prompt_compiled) VALUES ('default', 'Test', 'Dev', '', 'Be helpful.')`).run();
+
+      (global.fetch as any).mockResolvedValue(
+        mockClaudeStreamResponse(JSON.stringify({ goal: 'noop', cron_expression: null, steps: [] }))
+      );
+
+      await createSpecFromPrompt(db, 'faz qualquer coisa');
+
+      expect(global.fetch).toHaveBeenCalledWith(
+        'https://api.anthropic.com/v1/messages',
+        expect.objectContaining({ body: expect.any(String) }),
+      );
+      const call = (global.fetch as any).mock.calls.find((c: any[]) => c[0] === 'https://api.anthropic.com/v1/messages');
+      expect(call).toBeDefined();
+      const body = JSON.parse(call[1].body);
+      expect(body.thinking).toEqual({ type: 'enabled', budget_tokens: THINKING_BUDGETS.high });
+    } finally {
+      db.close();
+    }
+  });
+
+  it('11. Thinking level: setting "off" não envia thinking no body', async () => {
+    vi.mock('electron', () => ({ app: { getPath: vi.fn(() => '') } }));
+    const { initializeDatabase } = await import('../electron/database');
+    const db = initializeDatabase(':memory:');
+
+    try {
+      const rolesOff = JSON.stringify({ planner: { model: 'claude-3-7-sonnet-20250219', thinkingLevel: 'off' } });
+      db.prepare(`UPDATE ProviderConfigs SET anthropicKey = 'ant-test', roles = ? WHERE id = 1`).run(rolesOff);
+      db.prepare(`INSERT OR REPLACE INTO UserProfile (id, name, role, preferences, system_prompt_compiled) VALUES ('default', 'Test', 'Dev', '', 'Be helpful.')`).run();
+
+      (global.fetch as any).mockResolvedValue(
+        mockClaudeStreamResponse(JSON.stringify({ goal: 'noop', cron_expression: null, steps: [] }))
+      );
+
+      await createSpecFromPrompt(db, 'ping');
+
+      const call = (global.fetch as any).mock.calls.find((c: any[]) => c[0] === 'https://api.anthropic.com/v1/messages');
+      expect(call).toBeDefined();
+      const body = JSON.parse(call[1].body);
+      expect(body.thinking).toBeUndefined();
     } finally {
       db.close();
     }

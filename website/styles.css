@@ -1,17 +1,17 @@
 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap');
 
 :root {
-  --bg-void: #060609;
-  --bg-surface: #0c0c12;
-  --bg-elevated: #111118;
-  --bg-hover: #17171f;
-  --accent: #ff6b2b;
-  --accent-dim: rgba(255, 107, 43, 0.1);
-  --accent-glow: rgba(255, 107, 43, 0.22);
-  --text: #ffe0d0;
-  --text-dim: #c98a6e;
-  --border: #362218;
-  --font: 'JetBrains Mono', 'SF Mono', 'Fira Code', 'Cascadia Code', ui-monospace, monospace;
+    --bg-void: #060609;
+    --bg-surface: #0c0c12;
+    --bg-elevated: #111118;
+    --bg-hover: #17171f;
+    --accent: #ff6b2b;
+    --accent-dim: rgba(255, 107, 43, 0.1);
+    --accent-glow: rgba(255, 107, 43, 0.22);
+    --text: #ffe0d0;
+    --text-dim: #c98a6e;
+    --border: #362218;
+    --font: 'JetBrains Mono', 'SF Mono', 'Fira Code', 'Cascadia Code', ui-monospace, monospace;
 }
 
 * {
@@ -30,7 +30,9 @@ body {
 }
 
 /* Typography */
-h1, h2, h3 {
+h1,
+h2,
+h3 {
     font-weight: 700;
     line-height: 1.2;
 }
@@ -75,10 +77,13 @@ a {
 }
 
 @keyframes dotPulse {
-    0%, 100% {
+
+    0%,
+    100% {
         opacity: 1;
         box-shadow: 0 0 12px var(--accent-glow), 0 0 4px var(--accent);
     }
+
     50% {
         opacity: 0.6;
         box-shadow: 0 0 6px var(--accent-glow);
@@ -300,6 +305,15 @@ a {
     line-height: 1.6;
 }
 
+.card p code {
+    background: var(--bg-void);
+    color: var(--accent);
+    padding: 0.1rem 0.35rem;
+    border-radius: 3px;
+    font-size: 0.85rem;
+    border: 1px solid var(--border);
+}
+
 /* Drivers specific */
 .drivers-container {
     display: grid;
@@ -413,8 +427,15 @@ footer {
 }
 
 @keyframes modalIn {
-    from { opacity: 0; transform: translateY(20px); }
-    to { opacity: 1; transform: translateY(0); }
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
 }
 
 .modal-header {
@@ -508,11 +529,11 @@ footer {
     .hero-content h1 {
         font-size: 2.5rem;
     }
-    
+
     .navbar {
         padding: 1rem 2rem;
     }
-    
+
     .nav-links {
         display: none;
     }

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { acquireWindowsMixedStream } from '../../services/windowsAudioCapture';
 
 type WidgetPhase = 'setup' | 'ready' | 'recording' | 'loading';
 interface OutputDevice { id: number; name: string; uid: string; hasOutput: boolean; hasInput: boolean; }
@@ -146,19 +147,9 @@ export const WidgetOverlay: React.FC = () => {
   }, []);
 
   // ── Acquire system audio stream (platform-specific) ──
+  // Note: Windows is handled inline in startRecording via acquireWindowsMixedStream
+  // (Level 1 native capture — WASAPI loopback through Chromium's desktopCapturer).
   const acquireSystemAudio = async (): Promise<MediaStream | null> => {
-    if (isWindows) {
-      // Windows: WASAPI loopback via getDisplayMedia (handled by main process)
-      try {
-        const stream = await navigator.mediaDevices.getDisplayMedia({ audio: true, video: false } as any);
-        console.log('[Widget] ✅ Windows WASAPI loopback acquired');
-        return stream;
-      } catch (e) {
-        console.warn('[Widget] Windows system audio unavailable:', e);
-        return null;
-      }
-    }
-
     if (isLinux) {
       // Linux: find PulseAudio/PipeWire monitor source in enumerateDevices
       const devices = await navigator.mediaDevices.enumerateDevices();
@@ -222,31 +213,49 @@ export const WidgetOverlay: React.FC = () => {
       const micIdRes = await window.redbusAPI.getAppSetting('audio_mic_device_id');
       const micDeviceId = micIdRes.status === 'OK' ? micIdRes.data : null;
 
-      const micStream = await navigator.mediaDevices.getUserMedia({
-        audio: micDeviceId ? { deviceId: { exact: micDeviceId } } : true,
-      });
+      let mixedStream: MediaStream;
 
-      const audioCtx = new AudioContext();
-      audioCtxRef.current = audioCtx;
-      const destination = audioCtx.createMediaStreamDestination();
-      audioCtx.createMediaStreamSource(micStream).connect(destination);
-      const streams: MediaStream[] = [micStream];
-
-      // Acquire system audio (platform-specific)
-      const sysStream = await acquireSystemAudio();
-      if (sysStream) {
-        const sysSource = audioCtx.createMediaStreamSource(sysStream);
-        sysSource.connect(destination);
-        streams.push(sysStream);
-        console.log('[Widget] ✅ System audio mixed into recording');
+      if (isWindows) {
+        // Level 1 native capture: mic + WASAPI loopback mixed via Web Audio.
+        const mixed = await acquireWindowsMixedStream(micDeviceId);
+        audioCtxRef.current = mixed.audioContext;
+        const tracked: MediaStream[] = [mixed.sources.mic];
+        if (mixed.sources.system) tracked.push(mixed.sources.system);
+        streamsRef.current = tracked;
+        mixedStream = mixed.stream;
+        console.log(
+          mixed.sources.system
+            ? '[Widget] ✅ Windows WASAPI loopback + mic mixed into recording'
+            : '[Widget] Recording with mic only (Windows loopback unavailable)',
+        );
       } else {
-        console.warn('[Widget] Recording with mic only (no system audio)');
+        const micStream = await navigator.mediaDevices.getUserMedia({
+          audio: micDeviceId ? { deviceId: { exact: micDeviceId } } : true,
+        });
+
+        const audioCtx = new AudioContext();
+        audioCtxRef.current = audioCtx;
+        const destination = audioCtx.createMediaStreamDestination();
+        audioCtx.createMediaStreamSource(micStream).connect(destination);
+        const streams: MediaStream[] = [micStream];
+
+        // Acquire system audio (platform-specific)
+        const sysStream = await acquireSystemAudio();
+        if (sysStream) {
+          const sysSource = audioCtx.createMediaStreamSource(sysStream);
+          sysSource.connect(destination);
+          streams.push(sysStream);
+          console.log('[Widget] ✅ System audio mixed into recording');
+        } else {
+          console.warn('[Widget] Recording with mic only (no system audio)');
+        }
+        streamsRef.current = streams;
+        mixedStream = destination.stream;
       }
-      streamsRef.current = streams;
 
       // MediaRecorder
       const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm';
-      const recorder = new MediaRecorder(destination.stream, { mimeType });
+      const recorder = new MediaRecorder(mixedStream, { mimeType });
       audioChunksRef.current = [];
 
       recorder.ondataavailable = (e) => {

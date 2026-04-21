@@ -3,30 +3,50 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { TitleBar } from '../src/components/Layout/TitleBar';
 import { SkillManager } from '../src/components/Settings/SkillManager';
 
-// Mock window.redbusAPI
+// Mock window.redbusAPI — OC-style Markdown playbooks
 const mockSkills = [
   {
     name: 'fetch_jira_tickets',
     description: 'Fetches open Jira tickets from the REST API',
-    python_code: 'import sys, json\nargs = json.loads(sys.argv[1])\nprint(json.dumps({"status": "success", "data": []}))',
-    parameters_schema: '{"type":"object","properties":{"project":{"type":"string"}}}',
-    required_vault_keys: '["jira"]',
-    version: 2,
+    dir: '/tmp/skills/fetch_jira_tickets',
+    emoji: '🎫',
+    requires_env: ['JIRA_TOKEN'],
+    requires_bins: ['curl', 'jq'],
+    homepage: null,
+    mtimeMs: 1_700_000_000_000,
   },
   {
     name: 'check_github_prs',
     description: 'Check open PRs on GitHub',
-    python_code: 'import sys, json\nprint(json.dumps({"status": "success", "data": []}))',
-    parameters_schema: '{}',
-    required_vault_keys: '[]',
-    version: 1,
+    dir: '/tmp/skills/check_github_prs',
+    emoji: null,
+    requires_env: ['GITHUB_TOKEN'],
+    requires_bins: [],
+    homepage: null,
+    mtimeMs: 1_700_000_000_000,
   },
 ];
+
+const mockSkillDetail = (name: string) => ({
+  name,
+  description: 'Fetches open Jira tickets from the REST API',
+  body: `# ${name}\n\n## Steps\n1. curl the API.\n`,
+  dir: `/tmp/skills/${name}`,
+  bodyPath: `/tmp/skills/${name}/SKILL.md`,
+  frontmatter: {
+    name,
+    description: 'Fetches open Jira tickets from the REST API',
+    metadata: { emoji: '🎫', requires: { env: ['JIRA_TOKEN'], bins: ['curl', 'jq'] } },
+  },
+  scripts: [],
+  references: [],
+  assets: [],
+});
 
 beforeEach(() => {
   (window as any).redbusAPI = {
     listSkills: vi.fn().mockResolvedValue({ status: 'OK', data: mockSkills }),
-    getSkill: vi.fn().mockResolvedValue({ status: 'OK', data: mockSkills[0] }),
+    getSkill: vi.fn((name: string) => Promise.resolve({ status: 'OK', data: mockSkillDetail(name) })),
     updateSkill: vi.fn().mockResolvedValue({ status: 'OK' }),
     deleteSkill: vi.fn().mockResolvedValue({ status: 'OK' }),
     getSensorStatuses: vi.fn().mockResolvedValue({ status: 'OK', data: [] }),
@@ -59,6 +79,12 @@ beforeEach(() => {
     widgetStartRecording: vi.fn().mockResolvedValue({ status: 'OK' }),
     widgetStopRecording: vi.fn().mockResolvedValue({ status: 'OK' }),
     showMeetingReview: vi.fn().mockResolvedValue({ status: 'OK' }),
+    getWindowPlatform: vi.fn().mockResolvedValue({ status: 'OK', data: 'darwin' }),
+    isWindowMaximized: vi.fn().mockResolvedValue({ status: 'OK', data: false }),
+    minimizeWindow: vi.fn().mockResolvedValue({ status: 'OK' }),
+    maximizeWindow: vi.fn().mockResolvedValue({ status: 'OK' }),
+    closeWindow: vi.fn().mockResolvedValue({ status: 'OK' }),
+    closeWidget: vi.fn().mockResolvedValue({ status: 'OK' }),
   };
 });
 
@@ -95,24 +121,22 @@ describe('SkillManager — View', () => {
     render(<SkillManager />);
 
     await waitFor(() => {
-      // Skills appear in sidebar list (may also appear in detail header if auto-selected)
-      expect(screen.getAllByText('fetch_jira_tickets').length).toBeGreaterThanOrEqual(1);
-      expect(screen.getAllByText('check_github_prs').length).toBeGreaterThanOrEqual(1);
+      expect(screen.getByTestId('skill-item-fetch_jira_tickets')).toBeInTheDocument();
+      expect(screen.getByTestId('skill-item-check_github_prs')).toBeInTheDocument();
     });
   });
 
-  it('5. Deve mostrar o header com contagem de snippets', async () => {
+  it('5. Deve mostrar o header "skills" na sidebar', async () => {
     render(<SkillManager />);
 
     await waitFor(() => {
-      expect(screen.getByText('forge manager')).toBeInTheDocument();
-      // Count may appear as "2 snippets" or within the sidebar header
-      const header = screen.getByText('forge manager').closest('.view-sidebar-header');
-      expect(header).toBeInTheDocument();
+      const h2 = screen.getByRole('heading', { level: 2, name: /skills/i });
+      expect(h2).toBeInTheDocument();
+      expect(h2.closest('.view-sidebar-header')).toBeInTheDocument();
     });
   });
 
-  it('6. Deve selecionar uma skill e mostrar o editor de código', async () => {
+  it('6. Deve selecionar uma skill e mostrar o editor de playbook (SKILL.md)', async () => {
     render(<SkillManager />);
 
     await waitFor(() => {
@@ -122,9 +146,10 @@ describe('SkillManager — View', () => {
     fireEvent.click(screen.getByTestId('skill-item-check_github_prs'));
 
     await waitFor(() => {
-      const codeEditor = screen.getByTestId('skill-code-editor');
-      expect(codeEditor).toBeInTheDocument();
-      expect((codeEditor as HTMLTextAreaElement).value).toContain('json.dumps');
+      const bodyEditor = screen.getByTestId('skill-body-editor');
+      expect(bodyEditor).toBeInTheDocument();
+      expect((bodyEditor as HTMLTextAreaElement).value).toContain('## Steps');
+      expect((bodyEditor as HTMLTextAreaElement).value).toContain('check_github_prs');
     });
   });
 
@@ -135,21 +160,32 @@ describe('SkillManager — View', () => {
       expect(screen.getByTestId('skill-item-fetch_jira_tickets')).toBeInTheDocument();
     });
 
+    await waitFor(() => {
+      expect(screen.getByTestId('skill-save-btn')).toBeInTheDocument();
+    });
+
     const saveBtn = screen.getByTestId('skill-save-btn');
     fireEvent.click(saveBtn);
 
     await waitFor(() => {
       expect((window as any).redbusAPI.updateSkill).toHaveBeenCalled();
     });
+
+    const call = (window as any).redbusAPI.updateSkill.mock.calls[0][0];
+    expect(call).toMatchObject({
+      name: 'fetch_jira_tickets',
+      description: expect.any(String),
+      body: expect.any(String),
+    });
   });
 
-  it('8. Deve mostrar mensagem quando não há snippets', async () => {
+  it('8. Deve mostrar mensagem quando não há skills', async () => {
     (window as any).redbusAPI.listSkills = vi.fn().mockResolvedValue({ status: 'OK', data: [] });
 
     render(<SkillManager />);
 
     await waitFor(() => {
-      expect(screen.getByText(/nenhum snippet forjado/i)).toBeInTheDocument();
+      expect(screen.getByText(/nenhuma skill salva/i)).toBeInTheDocument();
     });
   });
 });

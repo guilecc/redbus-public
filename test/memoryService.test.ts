@@ -14,15 +14,17 @@ import {
   markMessagesAsCompacted,
 } from '../electron/services/archiveService';
 import { compactHistoryIfNeeded, generateCompactedSummary } from '../electron/services/memoryService';
+import { loadBuiltins } from '../electron/plugins/registry';
 
 describe('MemoryService - Context Compaction', () => {
   let db: ReturnType<typeof initializeDatabase>;
   const originalFetch = global.fetch;
 
   beforeEach(() => {
+    loadBuiltins();
     db = initializeDatabase(':memory:');
-    // Setup provider configs for LLM calls
-    db.prepare(`UPDATE ProviderConfigs SET googleKey = 'test-key', workerModel = 'gemini-2.5-flash' WHERE id = 1`).run();
+    // Setup provider configs for LLM calls with 'synthesizer' and 'utility' roles
+    db.prepare(`UPDATE ProviderConfigs SET googleKey = 'test-key', roles = '{"synthesizer":{"model":"google/gemini-2.5-flash"},"utility":{"model":"google/gemini-2.5-flash"}}' WHERE id = 1`).run();
     global.fetch = vi.fn();
   });
 

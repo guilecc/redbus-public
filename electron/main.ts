@@ -4,13 +4,17 @@ import { initializeDatabase, cleanupOldMemories } from './database';
 import { setupIpcHandlers } from './ipcHandlers';
 import { initStreamBus } from './services/streamBus';
 import { saveMeetingMemory } from './services/meetingService';
-import { initChannelManager, suspendChannels, resumeChannels } from './services/channelManager';
-import { initBriefingEngine } from './services/briefingEngine';
 import { startScheduler } from './services/schedulerService';
 import { initNotificationService } from './services/notificationService';
 import { initSensorManager } from './services/sensorManager';
 import { startProactivityEngine } from './services/proactivityEngine';
 import { initActivityLogger, logActivity } from './services/activityLogger';
+import { loadBuiltins as loadPluginBuiltins } from './plugins/registry';
+import { registerForgeBuiltins } from './plugins/forge-tools';
+import { registerBrowserToolBuiltins } from './plugins/browser-tools';
+import { syncSpawnSubagentTool } from './plugins/subagent-tool';
+import { reindexSkills } from './services/skillsLoader';
+import { initGraphScheduler, stopGraphScheduler } from './services/graph/graphScheduler';
 
 let mainWindow: BrowserWindow | null = null;
 let widgetWindow: BrowserWindow | null = null;
@@ -235,13 +239,17 @@ app.whenReady().then(async () => {
 
   db = initializeDatabase();
 
+  loadPluginBuiltins();
+  reindexSkills(db);
+  registerForgeBuiltins(db);
+  registerBrowserToolBuiltins();
+  syncSpawnSubagentTool(db);
+
   createWindow();
   if (mainWindow) {
     initNotificationService(mainWindow);
     initSensorManager(mainWindow, db);
     initActivityLogger(mainWindow, db);
-    initChannelManager(mainWindow, db);
-    initBriefingEngine(db, mainWindow);
 
     // Forward renderer console messages to the ActivityConsole
     const LEVEL_LABELS = ['verbose', 'info', 'warn', 'error'];
@@ -257,6 +265,9 @@ app.whenReady().then(async () => {
   if (mainWindow) initStreamBus(mainWindow);
   setupIpcHandlers(db, mainWindow);
   startScheduler(db, mainWindow);
+
+  // Spec 11 — Microsoft Graph background poll (mail + teams)
+  if (db) initGraphScheduler(db, mainWindow);
 
   // Start the Proactivity Engine (Subconscious)
   if (mainWindow && db) {
@@ -275,19 +286,7 @@ app.whenReady().then(async () => {
   });
 
   // ── Sleep/Wake Protection ──
-  // Pause Playwright polling on sleep to prevent stale sessions
-  powerMonitor.on('suspend', () => {
-    console.log('[Power] System suspending — pausing channel polling');
-    suspendChannels();
-  });
 
-  powerMonitor.on('resume', () => {
-    console.log('[Power] System resumed — restoring channels in 10s');
-    setTimeout(() => {
-      console.log('[Power] Resuming channel polling');
-      resumeChannels();
-    }, 10000); // Wait 10s for system to stabilize
-  });
 
   // ── Global crash recovery ──
   // Handle renderer process crashes gracefully instead of letting them cascade
@@ -312,6 +311,7 @@ app.on('window-all-closed', () => {
 
 // Graceful shutdown: close database + cleanup audio routing
 app.on('will-quit', () => {
+  try { stopGraphScheduler(); } catch { /* ignore */ }
   // 1. Flush WAL and close SQLite cleanly
   if (db) {
     try {

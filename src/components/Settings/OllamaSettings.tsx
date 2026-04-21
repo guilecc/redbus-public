@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { Download, CheckCircle2, PlayCircle, Loader2, HardDrive } from 'lucide-react';
 import { useTranslation } from '../../i18n';
+import type { RoleName } from '../../types/roles';
 
 interface Props {
   ollamaUrl: string;
   setOllamaUrl: (url: string) => void;
-  onModelSet: (role: 'workerModel' | 'maestroModel', value: string) => void;
+  onModelSet: (role: RoleName, value: string) => void;
   onInstalledChange?: (models: string[]) => void;
 }
 
@@ -19,41 +20,41 @@ export function OllamaSettings({ ollamaUrl, setOllamaUrl, onModelSet, onInstalle
     if (onInstalledChange) onInstalledChange(installed);
   }, [installed, onInstalledChange]);
 
-  const LLM_CATALOG = [
+  const LLM_CATALOG: Array<{ id: string; label: string; family: string; req: string; suggestedRole: RoleName; isWeak?: boolean }> = [
     // 1. Llama 4 (Meta)
-    { id: 'llama4:8b', label: 'Llama 4 (8B)', family: 'Meta', req: '4.9GB', role: 'worker' },
-    { id: 'llama4:70b', label: 'Llama 4 (70B)', family: 'Meta', req: '42GB', role: 'worker' },
+    { id: 'llama4:8b', label: 'Llama 4 (8B)', family: 'Meta', req: '4.9GB', suggestedRole: 'executor' },
+    { id: 'llama4:70b', label: 'Llama 4 (70B)', family: 'Meta', req: '42GB', suggestedRole: 'executor' },
     // 2. DeepSeek-V3.2 (DeepSeek)
-    { id: 'deepseek-v3.2:7b', label: 'DeepSeek-V3.2 (7B)', family: 'DeepSeek', req: '4.2GB', role: 'maestro' },
-    { id: 'deepseek-v3.2:70b', label: 'DeepSeek-V3.2 (70B)', family: 'DeepSeek', req: '43GB', role: 'worker' },
-    { id: 'deepseek-v3.2:671b', label: 'DeepSeek-V3.2 (671B)', family: 'DeepSeek', req: '390GB', role: 'worker' },
+    { id: 'deepseek-v3.2:7b', label: 'DeepSeek-V3.2 (7B)', family: 'DeepSeek', req: '4.2GB', suggestedRole: 'planner' },
+    { id: 'deepseek-v3.2:70b', label: 'DeepSeek-V3.2 (70B)', family: 'DeepSeek', req: '43GB', suggestedRole: 'executor' },
+    { id: 'deepseek-v3.2:671b', label: 'DeepSeek-V3.2 (671B)', family: 'DeepSeek', req: '390GB', suggestedRole: 'executor' },
     // 3. Qwen 3.5 (Alibaba)
-    { id: 'qwen3.5:0.8b', label: 'Qwen 3.5 (0.8B)', family: 'Alibaba', req: '550MB', role: 'maestro', isWeak: true },
-    { id: 'qwen3.5:4b', label: 'Qwen 3.5 (4B)', family: 'Alibaba', req: '2.6GB', role: 'maestro' },
-    { id: 'qwen3.5:9b', label: 'Qwen 3.5 (9B)', family: 'Alibaba', req: '5.5GB', role: 'worker' },
-    { id: 'qwen3.5:35b', label: 'Qwen 3.5 (35B)', family: 'Alibaba', req: '22GB', role: 'worker' },
+    { id: 'qwen3.5:0.8b', label: 'Qwen 3.5 (0.8B)', family: 'Alibaba', req: '550MB', suggestedRole: 'planner', isWeak: true },
+    { id: 'qwen3.5:4b', label: 'Qwen 3.5 (4B)', family: 'Alibaba', req: '2.6GB', suggestedRole: 'planner' },
+    { id: 'qwen3.5:9b', label: 'Qwen 3.5 (9B)', family: 'Alibaba', req: '5.5GB', suggestedRole: 'executor' },
+    { id: 'qwen3.5:35b', label: 'Qwen 3.5 (35B)', family: 'Alibaba', req: '22GB', suggestedRole: 'executor' },
     // 4. Gemma 4 (Google)
-    { id: 'gemma4:e2b', label: 'Gemma 4 (E2B)', family: 'Google', req: '1.6GB', role: 'maestro', isWeak: true },
-    { id: 'gemma4:e4b', label: 'Gemma 4 (E4B)', family: 'Google', req: '3.1GB', role: 'maestro' },
-    { id: 'gemma4:26b', label: 'Gemma 4 (26B)', family: 'Google', req: '18GB', role: 'worker' },
-    { id: 'gemma4:31b', label: 'Gemma 4 (31B)', family: 'Google', req: '20GB', role: 'worker' },
+    { id: 'gemma4:e2b', label: 'Gemma 4 (E2B)', family: 'Google', req: '1.6GB', suggestedRole: 'planner', isWeak: true },
+    { id: 'gemma4:e4b', label: 'Gemma 4 (E4B)', family: 'Google', req: '3.1GB', suggestedRole: 'planner' },
+    { id: 'gemma4:26b', label: 'Gemma 4 (26B)', family: 'Google', req: '18GB', suggestedRole: 'executor' },
+    { id: 'gemma4:31b', label: 'Gemma 4 (31B)', family: 'Google', req: '20GB', suggestedRole: 'executor' },
     // 5. Phi-4 (Microsoft)
-    { id: 'phi4-mini:3.8b', label: 'Phi-4 Mini (3.8B)', family: 'Microsoft', req: '2.3GB', role: 'maestro' },
-    { id: 'phi4:14b', label: 'Phi-4 (14B)', family: 'Microsoft', req: '9.1GB', role: 'worker' },
+    { id: 'phi4-mini:3.8b', label: 'Phi-4 Mini (3.8B)', family: 'Microsoft', req: '2.3GB', suggestedRole: 'planner' },
+    { id: 'phi4:14b', label: 'Phi-4 (14B)', family: 'Microsoft', req: '9.1GB', suggestedRole: 'executor' },
     // 6. Mistral / Ministral
-    { id: 'ministral-3:3b', label: 'Ministral 3 (3B)', family: 'Mistral', req: '2.1GB', role: 'maestro' },
-    { id: 'ministral-3:8b', label: 'Ministral 3 (8B)', family: 'Mistral', req: '5.2GB', role: 'worker' },
-    { id: 'mistral-large-3:123b', label: 'Mistral Large 3 (123B)', family: 'Mistral', req: '78GB', role: 'worker' },
+    { id: 'ministral-3:3b', label: 'Ministral 3 (3B)', family: 'Mistral', req: '2.1GB', suggestedRole: 'planner' },
+    { id: 'ministral-3:8b', label: 'Ministral 3 (8B)', family: 'Mistral', req: '5.2GB', suggestedRole: 'executor' },
+    { id: 'mistral-large-3:123b', label: 'Mistral Large 3 (123B)', family: 'Mistral', req: '78GB', suggestedRole: 'executor' },
     // 7. Nemotron Cascade 2 (NVIDIA)
-    { id: 'nemotron-cascade-2:30b', label: 'Nemotron Cascade 2 (30B)', family: 'Nvidia', req: '19GB', role: 'worker' },
+    { id: 'nemotron-cascade-2:30b', label: 'Nemotron Cascade 2 (30B)', family: 'Nvidia', req: '19GB', suggestedRole: 'executor' },
     // 8. Command R+ v2 (Cohere)
-    { id: 'command-r-v2:35b', label: 'Command R+ v2 (35B)', family: 'Cohere', req: '21GB', role: 'worker' },
-    { id: 'command-r-v2:104b', label: 'Command R+ v2 (104B)', family: 'Cohere', req: '65GB', role: 'worker' },
+    { id: 'command-r-v2:35b', label: 'Command R+ v2 (35B)', family: 'Cohere', req: '21GB', suggestedRole: 'executor' },
+    { id: 'command-r-v2:104b', label: 'Command R+ v2 (104B)', family: 'Cohere', req: '65GB', suggestedRole: 'executor' },
     // 9. Qwen3-Coder-Next
-    { id: 'qwen3-coder-next:7b', label: 'Qwen3 Coder Next (7B)', family: 'Alibaba', req: '4.5GB', role: 'worker' },
-    { id: 'qwen3-coder-next:32b', label: 'Qwen3 Coder Next (32B)', family: 'Alibaba', req: '19GB', role: 'worker' },
+    { id: 'qwen3-coder-next:7b', label: 'Qwen3 Coder Next (7B)', family: 'Alibaba', req: '4.5GB', suggestedRole: 'executor' },
+    { id: 'qwen3-coder-next:32b', label: 'Qwen3 Coder Next (32B)', family: 'Alibaba', req: '19GB', suggestedRole: 'executor' },
     // 10. LFM-2.5-Thinking
-    { id: 'lfm2.5-thinking:1.2b', label: 'LFM-2.5-Thinking (1.2B)', family: 'Liquid', req: '850MB', role: 'maestro', isWeak: true },
+    { id: 'lfm2.5-thinking:1.2b', label: 'LFM-2.5-Thinking (1.2B)', family: 'Liquid', req: '850MB', suggestedRole: 'planner', isWeak: true },
   ];
 
   useEffect(() => {
@@ -172,22 +173,22 @@ export function OllamaSettings({ ollamaUrl, setOllamaUrl, onModelSet, onInstalle
                     {dl ? (
                       <div style={{ fontSize: '10px', color: 'var(--accent)', fontWeight: 600 }}>{dl.status} {dl.pct}%</div>
                     ) : isInstalled ? (
-                      <div style={{ display: 'flex', gap: '4px', justifyContent: 'flex-end' }}>
-                        <button
-                          className="save-btn"
-                          style={{ fontSize: '9px', padding: '2px 8px', height: '22px' }}
-                          onClick={() => onModelSet('maestroModel', `ollama/${model.id}`)}
-                        >
-                          MAE
-                        </button>
-                        <button
-                          className="save-btn"
-                          style={{ fontSize: '9px', padding: '2px 8px', height: '22px' }}
-                          onClick={() => onModelSet('workerModel', `ollama/${model.id}`)}
-                        >
-                          WRK
-                        </button>
-                      </div>
+                      <select
+                        className="save-btn"
+                        style={{ fontSize: '9px', padding: '2px 6px', height: '22px' }}
+                        defaultValue=""
+                        onChange={(e) => {
+                          const role = e.target.value as RoleName | '';
+                          if (role) onModelSet(role, `ollama/${model.id}`);
+                          e.currentTarget.value = '';
+                        }}
+                      >
+                        <option value="" disabled>Aplicar a…</option>
+                        <option value="planner">Planner{model.suggestedRole === 'planner' ? ' ★' : ''}</option>
+                        <option value="executor">Executor{model.suggestedRole === 'executor' ? ' ★' : ''}</option>
+                        <option value="synthesizer">Synthesizer</option>
+                        <option value="utility">Utility</option>
+                      </select>
                     ) : (
                       <button
                         className="save-btn"

@@ -11,7 +11,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import { getAgentState, setAgentState } from './orchestratorService';
 import { getEnvironmentalContext, toggleSensor, getSensorStatuses } from './sensorManager';
-import { fetchWithTimeout, callOllamaChat } from './llmService';
+import { resolveRole, chatWithRole } from './roles';
 import { saveMessage } from './archiveService';
 import { sendOSNotification } from './notificationService';
 import { getAppSetting, setAppSetting } from '../database';
@@ -208,47 +208,15 @@ function parseDecision(raw: string): { should_speak: boolean; message: string; r
     }
 }
 
-/* ── LLM Call (Worker model, 30s timeout) ── */
-async function callCognitiveFilter(configs: any, model: string, sysPrompt: string, userPrompt: string): Promise<string> {
-    if (model.includes('gemini') && configs.googleKey) {
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${configs.googleKey}`;
-        const res = await fetchWithTimeout(url, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ systemInstruction: { parts: [{ text: sysPrompt }] }, contents: [{ parts: [{ text: userPrompt }] }], generationConfig: { responseMimeType: 'application/json' } })
-        }, 30_000);
-        if (!res.ok) throw new Error(`Gemini error: ${res.status}`);
-        const d = await res.json(); return d.candidates?.[0]?.content?.parts?.[0]?.text || '';
-    }
-    if (model.includes('claude') && configs.anthropicKey) {
-        const res = await fetchWithTimeout('https://api.anthropic.com/v1/messages', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'x-api-key': configs.anthropicKey, 'anthropic-version': '2023-06-01' },
-            body: JSON.stringify({ model, max_tokens: 512, system: sysPrompt, messages: [{ role: 'user', content: userPrompt }] })
-        }, 30_000);
-        if (!res.ok) throw new Error(`Anthropic error: ${res.status}`);
-        const d = await res.json(); return d.content?.[0]?.text || '';
-    }
-    if ((model.includes('gpt') || model.includes('o1') || model.includes('o3')) && configs.openAiKey) {
-        const res = await fetchWithTimeout('https://api.openai.com/v1/chat/completions', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${configs.openAiKey}` },
-            body: JSON.stringify({ model, response_format: { type: 'json_object' }, messages: [{ role: 'system', content: sysPrompt }, { role: 'user', content: userPrompt }] })
-        }, 30_000);
-        if (!res.ok) throw new Error(`OpenAI error: ${res.status}`);
-        const d = await res.json(); return d.choices?.[0]?.message?.content || '';
-    }
-    if (model.startsWith('ollama/') || model.startsWith('ollama-cloud/')) {
-        const isCloud = model.startsWith('ollama-cloud/');
-        const targetUrl = isCloud ? (configs.ollamaCloudUrl || 'https://ollama.com') : (configs.ollamaUrl || 'http://localhost:11434');
-        const cleanModel = model.replace('ollama/', '').replace('ollama-cloud/', '');
-        const authHeaders = isCloud && configs.ollamaCloudKey ? { 'Authorization': `Bearer ${configs.ollamaCloudKey}` } : undefined;
-        const d = await callOllamaChat(targetUrl, cleanModel, [
-            { role: 'system', content: sysPrompt },
-            { role: 'user', content: userPrompt }
-        ], { headers: authHeaders, response_format: { type: 'json_object' } });
-        return d.choices?.[0]?.message?.content || '';
-    }
-    throw new Error(`Unsupported worker model for proactivity: ${model}`);
+/* ── LLM Call (Utility role, 30s timeout) ── */
+async function callCognitiveFilter(db: any, sysPrompt: string, userPrompt: string): Promise<string> {
+    const result = await chatWithRole(db, 'utility', {
+        systemPrompt: sysPrompt,
+        messages: [{ role: 'user', content: userPrompt }],
+        responseFormat: 'json_object',
+        maxTokens: 512,
+    });
+    return result.content || '';
 }
 
 /* ── Core Evaluation ── */
@@ -314,7 +282,8 @@ export async function evaluateProactivity(options?: { force?: boolean }): Promis
     const configs = _db.prepare('SELECT * FROM ProviderConfigs WHERE id = 1').get();
     if (!configs) return earlyReturn('NO_CONFIGS');
 
-    const model = configs.workerModel || 'gemini-1.5-flash';
+    const utilityBinding = resolveRole(_db, 'utility');
+    const model = utilityBinding.model;
     const isOllama = model.startsWith('ollama/') || model.startsWith('ollama-cloud/');
     const hasKey = isOllama || (model.includes('gemini') && configs.googleKey) || (model.includes('claude') && configs.anthropicKey) || ((model.includes('gpt') || model.includes('o1') || model.includes('o3')) && configs.openAiKey);
     if (!hasKey) return earlyReturn(`NO_API_KEY for model ${model}`);
@@ -323,7 +292,7 @@ export async function evaluateProactivity(options?: { force?: boolean }): Promis
 
     try {
         const raw = await callCognitiveFilter(
-            configs, model, getPromptForLevel(force),
+            _db, getPromptForLevel(force),
             `Current environmental context:\n${parts.join('\n')}`
         );
         console.log(`[ProactivityEngine] LLM raw response: ${raw.slice(0, 200)}`);
@@ -407,12 +376,12 @@ export function startProactivityEngine(db: any, mainWindow: BrowserWindow, coold
     console.log(`  sensors: ${sensorStates.map(s => `${s.id}=${s.enabled}`).join(', ')}`);
     console.log(`  envContext: activeWindow=${!!envCtx.activeWindow}, clipboard=${!!envCtx.clipboardText}`);
     try {
-        const configs = _db?.prepare?.('SELECT workerModel, googleKey, anthropicKey, openAiKey FROM ProviderConfigs WHERE id = 1').get();
+        const configs = _db?.prepare?.('SELECT googleKey, anthropicKey, openAiKey FROM ProviderConfigs WHERE id = 1').get();
         if (configs) {
-            const model = configs.workerModel || 'gemini-1.5-flash';
+            const model = resolveRole(_db, 'utility').model;
             const isOllama = model.startsWith('ollama/') || model.startsWith('ollama-cloud/');
             const hasKey = isOllama || (model.includes('gemini') && !!configs.googleKey) || (model.includes('claude') && !!configs.anthropicKey) || ((model.includes('gpt') || model.includes('o1') || model.includes('o3')) && !!configs.openAiKey);
-            console.log(`  workerModel: ${model}, hasSupport: ${hasKey}`);
+            console.log(`  utility role model: ${model}, hasSupport: ${hasKey}`);
         } else {
             console.log(`  ProviderConfigs: NOT FOUND`);
         }

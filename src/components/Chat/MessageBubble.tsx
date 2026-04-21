@@ -44,14 +44,27 @@ interface MessageBubbleProps {
 
 /** Inline thinking indicator (collapsible) */
 const ThinkingInline: React.FC<{ active: boolean; text: string }> = ({ active, text }) => {
-  const [open, setOpen] = useState(false);
+  const [userToggled, setUserToggled] = useState<boolean | null>(null);
   if (!active && !text) return null;
+  
+  const isOpen = userToggled !== null ? userToggled : true;
+
   return (
-    <div className="msg-thinking" onClick={() => setOpen(!open)}>
-      <span className={`msg-thinking-dot${active ? ' active' : ''}`} />
-      <span className="msg-thinking-label">{active ? 'pensando...' : 'raciocínio'}</span>
-      {text && <span className="msg-thinking-chevron">{open ? '▾' : '▸'}</span>}
-      {open && text && <div className="msg-thinking-body">{text}</div>}
+    <div className="msg-thinking-container" style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginBottom: '8px' }}>
+      <div 
+        className="msg-thinking" 
+        style={{ cursor: 'pointer', width: 'fit-content' }}
+        onClick={() => setUserToggled(!isOpen)}
+      >
+        <span className={`msg-thinking-dot${active ? ' active' : ''}`} />
+        <span className="msg-thinking-label">{active ? 'pensando...' : 'raciocínio'}</span>
+        {text && <span className="msg-thinking-chevron">{isOpen ? '▾' : '▸'}</span>}
+      </div>
+      {isOpen && text && (
+        <div className="msg-thinking-body" style={{ whiteSpace: 'pre-wrap', borderLeft: '2px solid var(--border)', paddingLeft: '8px', width: '100%' }}>
+          {text}
+        </div>
+      )}
     </div>
   );
 };

@@ -1,3 +1,5 @@
+import type { RolesMap } from './roles';
+
 export interface ProviderConfigs {
   id?: number;
   openAiKey?: string;
@@ -6,8 +8,7 @@ export interface ProviderConfigs {
   ollamaUrl?: string;
   ollamaCloudKey?: string;
   ollamaCloudUrl?: string;
-  maestroModel?: string;
-  workerModel?: string;
+  roles?: RolesMap;
   updatedAt?: string;
 }
 
@@ -28,6 +29,10 @@ export interface RedBusAPI {
   getUserProfile: () => Promise<IpcResponse<any>>;
   saveUserProfile: (profile: any) => Promise<IpcResponse<void>>;
 
+  // Identidade profissional (usada no digest addressing)
+  getProfessionalProfile: () => Promise<IpcResponse<{ professional_name: string; professional_email: string; professional_aliases: string[] }>>;
+  saveProfessionalProfile: (payload: { professional_name: string; professional_email: string; professional_aliases: string[] }) => Promise<IpcResponse<void>>;
+
   // Salva Múltiplos
   saveProviderConfigs: (configs: ProviderConfigs) => Promise<IpcResponse<void>>;
 
@@ -47,6 +52,8 @@ export interface RedBusAPI {
   resumeViewExtraction: (viewId: string) => Promise<IpcResponse<void>>;
   resumeAuth: (viewId: string) => Promise<IpcResponse<void>>;
   respondToConsent: (requestId: string, approved: boolean) => Promise<IpcResponse<void>>;
+  abortAgentRun: (sessionId: string) => Promise<IpcResponse<void>>;
+  listActiveAgentRuns: () => Promise<IpcResponse<{ runs: Array<{ runId: string; sessionId: string; startedAt: number }> }>>;
 
   // Listeners
   onAuthRequired: (callback: (data: { viewId: string, url: string, bounds?: { x: number, y: number, width: number, height: number } }) => void) => void;
@@ -65,7 +72,7 @@ export interface RedBusAPI {
 
   // Execution
   executeSpec: (specId: string) => Promise<IpcResponse<void>>;
-  executePythonSpec: (specId: string) => Promise<IpcResponse<void>>;
+  executeSkillTask: (specId: string) => Promise<IpcResponse<void>>;
 
   // Session / Archive
   saveMessage: (msg: { id: string; role: string; content: string; type?: string; specData?: string }) => Promise<IpcResponse<void>>;
@@ -76,6 +83,12 @@ export interface RedBusAPI {
   // Factory Reset
   factoryReset: () => Promise<IpcResponse<void>>;
 
+  // Onboarding / Setup (Spec 08)
+  getSetupStatus: () => Promise<IpcResponse<SetupStatus>>;
+  markSetupComplete: () => Promise<IpcResponse<void>>;
+  resetSetup: () => Promise<IpcResponse<void>>;
+  recommendRoles: (availableByProvider: Record<string, string[]>) => Promise<IpcResponse<RolesMap>>;
+
   // Secure Vault
   saveVaultSecret: (id: string, serviceName: string, token: string) => Promise<IpcResponse<void>>;
   listVaultSecrets: () => Promise<IpcResponse<{ id: string; service_name: string; createdAt?: string }[]>>;
@@ -83,8 +96,8 @@ export interface RedBusAPI {
 
   // Skill Library
   listSkills: () => Promise<IpcResponse<SkillEntry[]>>;
-  getSkill: (name: string) => Promise<IpcResponse<SkillEntry>>;
-  updateSkill: (skill: { name: string; description: string; python_code: string; language?: string; parameters_schema?: string; required_vault_keys?: string[] }) => Promise<IpcResponse<void>>;
+  getSkill: (name: string) => Promise<IpcResponse<SkillDetail>>;
+  updateSkill: (skill: { name: string; description: string; body: string; metadata?: any; homepage?: string }) => Promise<IpcResponse<void>>;
   deleteSkill: (name: string) => Promise<IpcResponse<void>>;
 
   // Routines
@@ -117,6 +130,7 @@ export interface RedBusAPI {
   // App Settings
   getAppSetting: (key: string) => Promise<IpcResponse<string | null>>;
   setAppSetting: (key: string, value: string) => Promise<IpcResponse<void>>;
+  listThinkingLevels: (model: string) => Promise<IpcResponse<{ supported: string[]; default: string; providerId: string | null }>>;
   cleanupNow: () => Promise<IpcResponse<{ deleted: number }>>;
   onAppSettingChanged: (callback: (data: { key: string; value: string }) => void) => void;
 
@@ -200,16 +214,20 @@ export interface RedBusAPI {
   clearActivityLogs: () => Promise<IpcResponse<void>>;
   onActivityLogEntry: (callback: (entry: ActivityLogEntry) => void) => void;
 
-  // Unified Inbox
-  authenticateChannel: (channelId: string) => Promise<IpcResponse<void>>;
-  disconnectChannel: (channelId: string) => Promise<IpcResponse<void>>;
-  getChannelStatuses: () => Promise<IpcResponse<InboxChannelState[]>>;
-  triggerBriefing: () => Promise<IpcResponse<InboxBriefingResult>>;
-  generateDraftReplies: () => Promise<IpcResponse<InboxDraftReply[]>>;
-  injectDraft: (channelId: string, sender: string, draftText: string) => Promise<IpcResponse<void>>;
-  onBriefingReady: (callback: (data: InboxBriefingResult) => void) => void;
-  onChannelStatusChanged: (callback: (data: { channelId: string; status: string; errorMessage?: string }) => void) => void;
-  onDraftsReady: (callback: (data: { drafts: InboxDraftReply[] }) => void) => void;
+  // Spec 11 — Communications Hub (Microsoft Graph)
+  commsAuthStart: () => Promise<IpcResponse<{ userCode: string; verificationUri: string; expiresIn: number; interval: number; message?: string }>>;
+  commsAuthStatus: () => Promise<IpcResponse<CommsAuthStatus>>;
+  commsAuthDisconnect: () => Promise<IpcResponse<void>>;
+  commsList: (filter?: { since?: string; until?: string; limit?: number; sources?: ('outlook' | 'teams')[] }) => Promise<IpcResponse<CommunicationItem[]>>;
+  commsRefresh: () => Promise<IpcResponse<{ ingested: number }>>;
+  commsBackfillDate: (date: string) => Promise<IpcResponse<{ ingested: number; date: string }>>;
+  commsGenerateDigest: (payload: { date?: string; itemIds: string[] }) => Promise<IpcResponse<{ started: boolean; date: string; count: number }>>;
+  commsListFilterPresets: () => Promise<IpcResponse<CommsFilterPreset[]>>;
+  commsSaveFilterPreset: (preset: CommsFilterPreset) => Promise<IpcResponse<CommsFilterPreset[]>>;
+  commsDeleteFilterPreset: (id: string) => Promise<IpcResponse<CommsFilterPreset[]>>;
+  onCommsNewItems: (callback: (data: { count: number; latestTimestamp: string }) => void) => void;
+  onCommsAuthStatus: (callback: (data: CommsAuthStatus & { completed?: boolean }) => void) => void;
+  onCommsBackfillProgress: (callback: (data: { date: string; stage: 'start' | 'outlook' | 'teams' | 'done'; status: 'running' | 'ok' | 'error'; count?: number; error?: string }) => void) => void;
 
   // To-Do system
   createTodo: (payload: { content: string; target_date?: string | null }) => Promise<IpcResponse<TodoItem>>;
@@ -225,6 +243,19 @@ export interface RedBusAPI {
   removeStreamEventListener: () => void;
 }
 
+interface SetupStatus {
+  completed: boolean;
+  completedAt: string | null;
+  hasAnyKey: boolean;
+  allRolesConfigured: boolean;
+  rolesConfigured: {
+    planner: boolean;
+    executor: boolean;
+    synthesizer: boolean;
+    utility: boolean;
+  };
+}
+
 interface MeetingReviewData {
   raw_transcript: string;
   summary_json: {
@@ -235,17 +266,6 @@ interface MeetingReviewData {
     duration_estimate?: string;
   };
   provider_used: string;
-}
-
-interface SkillEntry {
-  name: string;
-  description: string;
-  python_code: string;
-  parameters_schema: string;
-  required_vault_keys: string;
-  version: number;
-  createdAt?: string;
-  updatedAt?: string;
 }
 
 interface RoutineEntry {
@@ -261,7 +281,7 @@ interface RoutineEntry {
   last_duration_ms: number | null;
   timezone: string;
   skill_name: string | null;
-  python_script: boolean;
+  skill_task: boolean;
   steps: Array<{ url: string; instruction: string }>;
 }
 
@@ -322,31 +342,6 @@ interface AccessibilityTreeResponse {
   textSummary: string;
 }
 
-interface InboxChannelState {
-  id: string;
-  label: string;
-  url: string;
-  status: 'disconnected' | 'authenticating' | 'connected' | 'extracting' | 'error';
-  lastPollAt: string | null;
-  lastMessages: any[];
-  errorMessage?: string;
-}
-
-interface InboxBriefingResult {
-  generatedAt: string;
-  totalMessages: number;
-  urgentCount: number;
-  briefingText: string;
-  messages: any[];
-  draftReplies?: InboxDraftReply[];
-}
-
-interface InboxDraftReply {
-  channel: string;
-  sender: string;
-  draft: string;
-}
-
 interface TodoItem {
   id: string;
   content: string;
@@ -378,8 +373,79 @@ export interface StreamEvent {
   ts: number;
 }
 
+// Spec 11 — Communications Hub data contracts
+export interface CommunicationItem {
+  id: string;
+  graphId: string;
+  source: 'outlook' | 'teams';
+  sender: string;
+  senderEmail?: string;
+  threadId?: string;
+  groupId?: string;
+  subject?: string;
+  channelOrChatName?: string;
+  plainText: string;
+  timestamp: string;
+  isUnread: boolean;
+  webLink?: string;
+  importance?: 'low' | 'normal' | 'high';
+  mentionsMe?: boolean;
+}
+
+export interface CommsAuthStatus {
+  connected: boolean;
+  upn?: string;
+  displayName?: string;
+  expiresAt?: string;
+}
+
+export interface CommsFilterPreset {
+  id: string;
+  name: string;
+  blacklist: string[];
+  whitelist: string[];
+  sources: { outlook: boolean; teams: boolean };
+  unreadOnly: boolean;
+  sameDomainOnly?: boolean;
+  // When true, this preset is auto-applied whenever the Communications Hub
+  // mounts. Only a single preset can hold the default flag at any given time
+  // (backend enforces this on save).
+  isDefault?: boolean;
+}
+
 declare global {
   interface Window {
     redbusAPI: RedBusAPI;
+  }
+  interface SkillEntry {
+    name: string;
+    description: string;
+    dir: string;
+    emoji: string | null;
+    requires_env: string[];
+    requires_bins: string[];
+    homepage: string | null;
+    mtimeMs: number;
+  }
+  interface SkillDetail {
+    name: string;
+    description: string;
+    body: string;
+    dir: string;
+    bodyPath: string;
+    frontmatter: {
+      name: string;
+      description: string;
+      homepage?: string;
+      metadata?: {
+        emoji?: string;
+        requires?: { env?: string[]; bins?: string[]; anyBins?: string[] };
+        primaryEnv?: string;
+        install?: Array<Record<string, any>>;
+      };
+    };
+    scripts: string[];
+    references: string[];
+    assets: string[];
   }
 }

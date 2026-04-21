@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from '../../i18n/index.js';
-import { Settings, Archive, ArrowLeft, Code2, Timer, ClipboardCopy, AppWindow, Eye, Layers, Mic, Video, Terminal, Mail, MessageSquare, ListTodo, Minus, Square, X, Maximize2 } from 'lucide-react';
+import { Settings, Archive, ArrowLeft, Code2, Timer, ClipboardCopy, AppWindow, Eye, Layers, Mic, Video, Terminal, MessageSquare, ListTodo, Minus, Square, X, Maximize2, Inbox } from 'lucide-react';
 
 type ProactivityLevel = 'OFF' | 'LOW' | 'MEDIUM' | 'HIGH';
 
@@ -212,8 +212,8 @@ export const TitleBar: React.FC<TitleBarProps> = ({ subtitle, activeView, onView
         <button className={`titlebar-btn${activeView === 'meetings' ? ' active' : ''}`} onClick={() => onViewChange('meetings')} title={t.titlebar.nav.meetings} data-testid="meetings-btn">
           <Video size={13} />
         </button>
-        <button className={`titlebar-btn${activeView === 'inbox' ? ' active' : ''}`} onClick={() => onViewChange('inbox')} title={t.titlebar.nav.inbox} data-testid="inbox-btn">
-          <Mail size={13} />
+        <button className={`titlebar-btn${activeView === 'comms' ? ' active' : ''}`} onClick={() => onViewChange('comms')} title="Communications Hub" data-testid="comms-btn">
+          <Inbox size={13} />
         </button>
         <button className={`titlebar-btn${activeView === 'todos' ? ' active' : ''}`} onClick={() => onViewChange('todos')} title="to-dos" data-testid="todos-btn">
           <ListTodo size={13} />

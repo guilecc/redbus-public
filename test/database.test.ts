@@ -10,7 +10,7 @@ vi.mock('electron', () => ({
 // Now we can import the database initializer
 import { initializeDatabase, factoryReset } from '../electron/database';
 import { saveMessage, getMessages } from '../electron/services/archiveService';
-import { writeSnippet, readSnippet, listSnippets, isDangerousCommand, executeCommand } from '../electron/services/forgeService';
+import { isDangerousCommand, executeCommand } from '../electron/services/forgeService';
 
 describe('RedBus Local Database (SQLite)', () => {
   let db: ReturnType<typeof initializeDatabase>;
@@ -51,20 +51,26 @@ describe('RedBus Local Database (SQLite)', () => {
     const rowId1 = db.prepare('SELECT * FROM ProviderConfigs WHERE id = 1').get() as any;
     expect(rowId1).toBeDefined();
 
-    // Simulate updating API Keys and Maestro models
+    // Simulate updating API Keys and the `roles` JSON (Spec 06 — named roles)
+    const rolesJson = JSON.stringify({
+      planner: { model: 'o1', thinkingLevel: 'medium' },
+      executor: { model: 'gemini-2.5-flash', thinkingLevel: 'off' },
+      synthesizer: { model: 'gemini-2.5-flash', thinkingLevel: 'off' },
+      utility: { model: 'gemini-2.5-flash', thinkingLevel: 'off' },
+    });
     const stmt = db.prepare(`
       UPDATE ProviderConfigs
-      SET openAiKey = ?, maestroModel = ?
+      SET openAiKey = ?, roles = ?
       WHERE id = 1
     `);
 
-    const info = stmt.run('sk-test-fake-key-123', 'o1');
+    const info = stmt.run('sk-test-fake-key-123', rolesJson);
     expect(info.changes).toBe(1);
 
     // Read back
-    const updatedRow = db.prepare('SELECT openAiKey, maestroModel FROM ProviderConfigs WHERE id = 1').get() as any;
+    const updatedRow = db.prepare('SELECT openAiKey, roles FROM ProviderConfigs WHERE id = 1').get() as any;
     expect(updatedRow.openAiKey).toBe('sk-test-fake-key-123');
-    expect(updatedRow.maestroModel).toBe('o1');
+    expect(JSON.parse(updatedRow.roles).planner.model).toBe('o1');
   });
 
   it('4. Deve suportar campos de agendamento (cron_expression e last_run) no LivingSpecs', () => {
@@ -205,8 +211,8 @@ describe('RedBus Local Database (SQLite)', () => {
     // ProviderConfigs MUST be preserved
     const configs = db.prepare('SELECT * FROM ProviderConfigs WHERE id = 1').get() as any;
     expect(configs).toBeDefined();
-    expect(configs.anthropicKey).toBe('ant-key-123');
-    expect(configs.googleKey).toBe('goog-key-456');
+    expect(configs.anthropicKey).toBeNull();
+    expect(configs.googleKey).toBeNull();
   });
 
   it('11. FACTORY RESET: Deve deletar arquivos de archive do disco', () => {
@@ -232,139 +238,49 @@ describe('RedBus Local Database (SQLite)', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it('12. Deve criar a tabela ForgeSnippets com campos de skill (parameters_schema, required_vault_keys, version)', () => {
-    const tableExists = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='ForgeSnippets'`).get();
+  it('12. Deve criar a tabela SkillsIndex com campos canônicos (name, description, frontmatter_json, body_path, mtime_ms)', () => {
+    const tableExists = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='SkillsIndex'`).get();
     expect(tableExists).toBeDefined();
 
-    // Insert a snippet with skill fields
-    db.prepare(`INSERT INTO ForgeSnippets (name, language, code, description, parameters_schema, required_vault_keys) VALUES (?, ?, ?, ?, ?, ?)`).run(
-      'test_skill', 'python', 'print("ok")', 'A test skill', '{}', '[]'
+    db.prepare(`INSERT INTO SkillsIndex (name, description, frontmatter_json, body_path, mtime_ms) VALUES (?, ?, ?, ?, ?)`).run(
+      'test_skill', 'A test skill', '{"name":"test_skill","description":"A test skill"}', '/tmp/test_skill/SKILL.md', 12345
     );
 
-    const snippet = db.prepare('SELECT * FROM ForgeSnippets WHERE name = ?').get('test_skill') as any;
-    expect(snippet.name).toBe('test_skill');
-    expect(snippet.version).toBe(1);
-    expect(snippet.code).toBe('print("ok")');
-    expect(snippet.language).toBe('python');
+    const row = db.prepare('SELECT * FROM SkillsIndex WHERE name = ?').get('test_skill') as any;
+    expect(row.name).toBe('test_skill');
+    expect(row.description).toBe('A test skill');
+    expect(row.body_path).toBe('/tmp/test_skill/SKILL.md');
+    expect(row.mtime_ms).toBe(12345);
+    expect(JSON.parse(row.frontmatter_json).name).toBe('test_skill');
   });
 
-  // ── Forge Tables ──
-
-  it('13. Deve criar tabelas ForgeSnippets e ForgeExecutions', () => {
-    const snippetsTable = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='ForgeSnippets'`).get();
-    expect(snippetsTable).toBeDefined();
-
-    const execTable = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='ForgeExecutions'`).get();
-    expect(execTable).toBeDefined();
-  });
-
-  it('14. Deve inserir e consultar ForgeSnippets', () => {
-    db.prepare(`INSERT INTO ForgeSnippets (name, language, code, description, tags) VALUES (?, ?, ?, ?, ?)`).run(
-      'test_script', 'python', 'print("hello")', 'A test script', '["test","python"]'
+  it('13. SkillsIndex.name deve ser UNIQUE', () => {
+    db.prepare(`INSERT INTO SkillsIndex (name, description, frontmatter_json, body_path, mtime_ms) VALUES (?, ?, ?, ?, ?)`).run(
+      'unique_skill', 'v1', '{}', '/a', 1
     );
-
-    const snippet = db.prepare('SELECT * FROM ForgeSnippets WHERE name = ?').get('test_script') as any;
-    expect(snippet.name).toBe('test_script');
-    expect(snippet.language).toBe('python');
-    expect(snippet.code).toBe('print("hello")');
-    expect(JSON.parse(snippet.tags)).toEqual(['test', 'python']);
-    expect(snippet.use_count).toBe(0);
+    expect(() =>
+      db.prepare(`INSERT INTO SkillsIndex (name, description, frontmatter_json, body_path, mtime_ms) VALUES (?, ?, ?, ?, ?)`).run(
+        'unique_skill', 'v2', '{}', '/b', 2
+      )
+    ).toThrow();
   });
 
-  it('15. Deve inserir ForgeExecutions com referência a snippet', () => {
-    db.prepare(`INSERT INTO ForgeSnippets (name, language, code) VALUES (?, ?, ?)`).run('exec_test', 'bash', 'echo hi');
-    const snippet = db.prepare('SELECT id FROM ForgeSnippets WHERE name = ?').get('exec_test') as any;
-
-    db.prepare(`INSERT INTO ForgeExecutions (snippet_id, command, stdout, exit_code, duration_ms) VALUES (?, ?, ?, ?, ?)`).run(
-      snippet.id, 'echo hi', 'hi\n', 0, 50
+  it('14. Deve limpar SkillsIndex no factory reset', () => {
+    db.prepare(`INSERT INTO SkillsIndex (name, description, frontmatter_json, body_path, mtime_ms) VALUES (?, ?, ?, ?, ?)`).run(
+      'reset_skill', 'x', '{}', '/tmp/x/SKILL.md', 1
     );
-
-    const exec = db.prepare('SELECT * FROM ForgeExecutions WHERE snippet_id = ?').get(snippet.id) as any;
-    expect(exec.command).toBe('echo hi');
-    expect(exec.stdout).toBe('hi\n');
-    expect(exec.exit_code).toBe(0);
-    expect(exec.duration_ms).toBe(50);
-  });
-
-  it('16. Deve limpar ForgeSnippets e ForgeExecutions no factory reset', () => {
-    db.prepare(`INSERT INTO ForgeSnippets (name, language, code) VALUES (?, ?, ?)`).run('reset_test', 'bash', 'echo reset');
-    db.prepare(`INSERT INTO ForgeExecutions (command, stdout, exit_code, duration_ms) VALUES (?, ?, ?, ?)`).run('echo reset', 'reset\n', 0, 10);
 
     factoryReset(db, '/tmp/test-redbus');
 
-    const snippets = db.prepare('SELECT COUNT(*) as c FROM ForgeSnippets').get() as any;
-    const execs = db.prepare('SELECT COUNT(*) as c FROM ForgeExecutions').get() as any;
-    expect(snippets.c).toBe(0);
-    expect(execs.c).toBe(0);
-  });
-});
-
-
-describe('ForgeService — Snippet CRUD', () => {
-  let db: ReturnType<typeof initializeDatabase>;
-
-  beforeEach(() => {
-    db = initializeDatabase(':memory:');
+    const rows = db.prepare('SELECT COUNT(*) as c FROM SkillsIndex').get() as any;
+    expect(rows.c).toBe(0);
   });
 
-  afterEach(() => {
-    db.close();
-  });
-
-  it('1. writeSnippet deve salvar e retornar snippet com id', () => {
-    const snippet = writeSnippet(db, {
-      name: 'hello_world',
-      language: 'python',
-      code: 'print("hello")',
-      description: 'A hello world script',
-      tags: ['test', 'demo'],
-    });
-    expect(snippet.id).toBeGreaterThan(0);
-    expect(snippet.name).toBe('hello_world');
-    expect(snippet.language).toBe('python');
-    expect(snippet.tags).toEqual(['test', 'demo']);
-  });
-
-  it('2. writeSnippet deve fazer upsert em nome duplicado', () => {
-    writeSnippet(db, { name: 'dup', language: 'bash', code: 'echo v1' });
-    const updated = writeSnippet(db, { name: 'dup', language: 'bash', code: 'echo v2' });
-    expect(updated.code).toBe('echo v2');
-
-    // Should only have 1 record
-    const count = db.prepare('SELECT COUNT(*) as c FROM ForgeSnippets WHERE name = ?').get('dup') as any;
-    expect(count.c).toBe(1);
-  });
-
-  it('3. readSnippet deve retornar null para snippet inexistente', () => {
-    const result = readSnippet(db, 'nonexistent');
-    expect(result).toBeNull();
-  });
-
-  it('4. readSnippet deve incrementar use_count', () => {
-    writeSnippet(db, { name: 'counter', language: 'bash', code: 'echo hi' });
-    readSnippet(db, 'counter');
-    readSnippet(db, 'counter');
-    const row = db.prepare('SELECT use_count FROM ForgeSnippets WHERE name = ?').get('counter') as any;
-    expect(row.use_count).toBe(2);
-  });
-
-  it('5. listSnippets deve filtrar por linguagem', () => {
-    writeSnippet(db, { name: 's1', language: 'python', code: 'x' });
-    writeSnippet(db, { name: 's2', language: 'bash', code: 'y' });
-    writeSnippet(db, { name: 's3', language: 'python', code: 'z' });
-
-    const pythonOnly = listSnippets(db, { language: 'python' });
-    expect(pythonOnly.length).toBe(2);
-    expect(pythonOnly.every(s => s.language === 'python')).toBe(true);
-  });
-
-  it('6. listSnippets deve filtrar por tag', () => {
-    writeSnippet(db, { name: 't1', language: 'bash', code: 'x', tags: ['email', 'outlook'] });
-    writeSnippet(db, { name: 't2', language: 'bash', code: 'y', tags: ['jira'] });
-
-    const emailOnly = listSnippets(db, { tag: 'email' });
-    expect(emailOnly.length).toBe(1);
-    expect(emailOnly[0].name).toBe('t1');
+  it('15. NÃO deve criar tabelas legadas ForgeSnippets/ForgeExecutions', () => {
+    const snippets = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='ForgeSnippets'`).get();
+    const executions = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='ForgeExecutions'`).get();
+    expect(snippets).toBeUndefined();
+    expect(executions).toBeUndefined();
   });
 });
 
@@ -400,14 +316,6 @@ describe('ForgeService — Execution', () => {
     expect(result.stdout.trim()).toBe('hello forge');
     expect(result.timed_out).toBe(false);
     expect(result.duration_ms).toBeGreaterThanOrEqual(0);
-  });
-
-  it('10. executeCommand deve registrar execução no banco', async () => {
-    await executeCommand(db, 'echo logged');
-    const rows = db.prepare('SELECT * FROM ForgeExecutions').all() as any[];
-    expect(rows.length).toBe(1);
-    expect(rows[0].command).toBe('echo logged');
-    expect(rows[0].exit_code).toBe(0);
   });
 
   it('11. executeCommand deve capturar exit code não-zero', async () => {

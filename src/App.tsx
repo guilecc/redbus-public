@@ -10,15 +10,37 @@ import { WidgetOverlay } from './components/Widget/WidgetOverlay';
 import { MeetingReview } from './components/Meeting/MeetingReview';
 import { MeetingsView } from './components/Meetings/MeetingsView';
 import { ActivityConsole } from './components/ActivityConsole/ActivityConsole';
-import { UnifiedInboxSetup } from './components/UnifiedInbox/UnifiedInboxSetup';
-import { InboxView } from './components/Inbox/InboxView';
+import { CommunicationHub } from './components/Comms/CommunicationHub';
 import { TodoManager } from './components/Todos/TodoManager';
 import { HistoryView } from './components/History/HistoryView';
 import { useStreamingResponse } from './hooks/useStreamingResponse';
 import { OllamaSettings } from './components/Settings/OllamaSettings';
-import { FlagEmoji } from './components/FlagEmoji';
+import { RolePicker } from './components/Settings/RolePicker';
+import { OnboardingShell } from './components/Onboarding/OnboardingShell';
+import { DEFAULT_ROLES, ROLE_NAMES, REQUIRED_ROLE_NAMES, type RoleBinding, type RoleName, type RolesMap } from './types/roles';
 import { v4 as uuidv4 } from 'uuid';
-import { Loader2, CheckCircle2, XCircle, BrainCircuit, ShieldCheck, Mic, Zap, Settings, Cloud, ShieldEllipsis, Volume2, Globe } from 'lucide-react';
+import { Loader2, CheckCircle2, XCircle, BrainCircuit, ShieldCheck, Mic, Zap, Settings, Cloud, ShieldEllipsis, Volume2, Globe, MessagesSquare } from 'lucide-react';
+
+// ── Digest curation — mirrors electron/services/digestService DigestCurationConfig ──
+// Kept inline to avoid pulling an electron-only module into the renderer bundle.
+interface DigestCurationConfig {
+  dropAcks: boolean;
+  minLength: number;
+  signalLength: number;
+  neutralCapPerThread: number;
+  alwaysKeepFirst: boolean;
+  alwaysKeepLast: boolean;
+  customAckPatterns: string[];
+}
+const DEFAULT_DIGEST_CURATION: DigestCurationConfig = {
+  dropAcks: true,
+  minLength: 10,
+  signalLength: 200,
+  neutralCapPerThread: 2,
+  alwaysKeepFirst: true,
+  alwaysKeepLast: true,
+  customAckPatterns: [],
+};
 
 type ProviderStatus = 'idle' | 'loading' | 'valid' | 'invalid';
 interface ModelOpt { id: string; name: string }
@@ -38,11 +60,12 @@ export default function App() {
     ollamaCloudKey: '',
     ollamaCloudUrl: 'https://ollama.com'
   });
-  const [models, setModels] = useState({ maestroModel: 'claude-3-7-sonnet-20250219', workerModel: 'gemini-2.0-flash' });
+  const [roles, setRoles] = useState<RolesMap>(DEFAULT_ROLES);
+  const [rolesMode, setRolesMode] = useState<'simple' | 'advanced'>('simple');
   const [saving, setSaving] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [activeView, setActiveView] = useState('chat');
-  const [settingsTab, setSettingsTab] = useState<'llm' | 'vault' | 'audio' | 'proactivity' | 'system'>('llm');
+  const [settingsTab, setSettingsTab] = useState<'llm' | 'vault' | 'audio' | 'proactivity' | 'digest' | 'system'>('llm');
   const [profileExists, setProfileExists] = useState<boolean | null>(null);
 
   const [messages, setMessages] = useState<Message[]>([]);
@@ -53,9 +76,10 @@ export default function App() {
   const [showResetModal, setShowResetModal] = useState(false);
   const [resetConfirmText, setResetConfirmText] = useState('');
   const [resetting, setResetting] = useState(false);
+  const [setupCompleted, setSetupCompleted] = useState<boolean | null>(null);
 
-  // Language settings
-  const [appLanguage, setAppLanguage] = useState<'en' | 'pt-BR' | null>(null);
+  // Language settings — defaults to English; user can change during onboarding or in Settings
+  const [appLanguage, setAppLanguage] = useState<'en' | 'pt-BR'>('en');
   const [showLangWarning, setShowLangWarning] = useState(false);
   const [pendingLang, setPendingLang] = useState<'en' | 'pt-BR' | null>(null);
 
@@ -76,6 +100,14 @@ export default function App() {
   const [proactivityTimingsLoaded, setProactivityTimingsLoaded] = useState(false);
   const [transcriptionEngine, setTranscriptionEngine] = useState<'gemini' | 'whisper' | 'local'>('gemini');
   const [transcriptionMode, setTranscriptionMode] = useState<'FULL_CLOUD' | 'HYBRID_LOCAL'>('FULL_CLOUD');
+
+  // Digest curation — persisted in AppSettings under `comms.digest.curation`.
+  const [digestCuration, setDigestCuration] = useState<DigestCurationConfig>(DEFAULT_DIGEST_CURATION);
+  const [digestCurationLoaded, setDigestCurationLoaded] = useState(false);
+  const [digestSaveStatus, setDigestSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
+  // Raw text draft for the custom-ack input so commas/spaces are not stripped
+  // on every keystroke (array parse happens only on save / blur / reset).
+  const [customAckDraft, setCustomAckDraft] = useState<string>('');
 
   // Audio device selection
   const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([]);
@@ -122,12 +154,18 @@ export default function App() {
   useEffect(() => {
     async function fetchSettings() {
       if (window.redbusAPI) {
-        // Load language preference first
+        // Setup flag gates the onboarding wizard; language preference is
+        // independent and always honoured if the user picked one previously
+        // (e.g. survives setup:reset).
+        const setupRes = await window.redbusAPI.getSetupStatus();
+        const alreadySetup = setupRes.status === 'OK' && !!setupRes.data && setupRes.data.completed && setupRes.data.allRolesConfigured;
+        setSetupCompleted(alreadySetup);
+
         const langRes = await window.redbusAPI.getAppSetting('language');
         if (langRes.status === 'OK' && langRes.data) {
-          setAppLanguage(langRes.data as 'en' | 'pt-BR');
-        } else {
-          setAppLanguage(null); // triggers first-launch overlay
+          const stored = langRes.data as 'en' | 'pt-BR';
+          setAppLanguage(stored);
+          setLang(stored);
         }
 
         const profileRes = await window.redbusAPI.getUserProfile();
@@ -159,7 +197,7 @@ export default function App() {
 
         const response = await window.redbusAPI.getProviderConfigs();
         if (response.status === 'OK' && response.data) {
-          const { openAiKey, anthropicKey, googleKey, ollamaUrl, ollamaCloudKey, ollamaCloudUrl, maestroModel, workerModel } = response.data;
+          const { openAiKey, anthropicKey, googleKey, ollamaUrl, ollamaCloudKey, ollamaCloudUrl, roles: loadedRoles } = response.data;
           setKeys({
             openAiKey: openAiKey || '',
             anthropicKey: anthropicKey || '',
@@ -168,11 +206,14 @@ export default function App() {
             ollamaCloudKey: ollamaCloudKey || '',
             ollamaCloudUrl: ollamaCloudUrl || 'https://ollama.com',
           });
-          if (maestroModel || workerModel) {
-            setModels(curr => ({
-              maestroModel: maestroModel || curr.maestroModel,
-              workerModel: workerModel || curr.workerModel,
-            }));
+          if (loadedRoles) {
+            const merged: RolesMap = { ...DEFAULT_ROLES, ...loadedRoles } as RolesMap;
+            setRoles(merged);
+            const firstModel = merged.planner?.model;
+            // `digest` is an optional role — excluding it keeps upgrading users
+            // in simple mode when they haven't picked a dedicated digest model yet.
+            const allSame = firstModel && REQUIRED_ROLE_NAMES.every(r => merged[r]?.model === firstModel);
+            setRolesMode(allSame ? 'simple' : 'advanced');
           }
           if (openAiKey) validateKey('openai', openAiKey);
           if (anthropicKey) validateKey('anthropic', anthropicKey);
@@ -187,7 +228,7 @@ export default function App() {
           }
         }
 
-        // Load vault secrets list
+        // Initial load of vault secrets
         const vaultRes = await window.redbusAPI.listVaultSecrets();
         if (vaultRes.status === 'OK' && vaultRes.data) setVaultSecrets(vaultRes.data);
       }
@@ -323,7 +364,7 @@ export default function App() {
           } else {
             const spec = response.data.parsedSpec || response.data;
             const specId = response.data.specId;
-            const isPython = response.data.pythonScript === true;
+            const isSkillTask = response.data.skillTask === true;
             const skillName = response.data.skillName;
 
             // Check for conversational_reply (FORMAT F/G results from screen memory or accessibility)
@@ -340,9 +381,9 @@ export default function App() {
               if (!backendReplyId && window.redbusAPI) {
                 window.redbusAPI.saveMessage({ id: textId, role: 'assistant', content: conversationalReply });
               }
-            } else if (isPython || (spec.steps && spec.steps.length > 0)) {
-              const stepLabels = isPython
-                ? [{ label: skillName ? `skill → ${skillName}` : 'python → exec', status: 'pending' as const }]
+            } else if (isSkillTask || (spec.steps && spec.steps.length > 0)) {
+              const stepLabels = isSkillTask
+                ? [{ label: skillName ? `skill → ${skillName}` : 'task → exec', status: 'pending' as const }]
                 : spec.steps.map((s: any) => ({ label: `nav → ${s.url}`, status: 'pending' as const }));
 
               const specMsg: Message = {
@@ -364,8 +405,8 @@ export default function App() {
               });
 
               if (!spec.cron_expression) {
-                if (isPython) {
-                  window.redbusAPI.executePythonSpec(specId);
+                if (isSkillTask) {
+                  window.redbusAPI.executeSkillTask(specId);
                 } else {
                   window.redbusAPI.executeSpec(specId);
                 }
@@ -409,7 +450,7 @@ export default function App() {
   const handleSaveSettings = async () => {
     setSaving(true);
     if (window.redbusAPI) {
-      await window.redbusAPI.saveProviderConfigs({ ...keys, ...models });
+      await window.redbusAPI.saveProviderConfigs({ ...keys, roles });
     }
     setTimeout(() => setSaving(false), 500);
   };
@@ -422,12 +463,53 @@ export default function App() {
     }
   };
 
-  const handleChangeModel = async (type: 'maestroModel' | 'workerModel', value: string) => {
-    const newModels = { ...models, [type]: value };
-    setModels(newModels);
+  const handleChangeRole = async (role: RoleName, patch: Partial<RoleBinding>) => {
+    const next: RolesMap = { ...roles, [role]: { ...roles[role], ...patch } };
+    setRoles(next);
     setSaving(true);
     if (window.redbusAPI) {
-      await window.redbusAPI.saveProviderConfigs({ ...keys, ...newModels });
+      await window.redbusAPI.saveProviderConfigs({ ...keys, roles: next });
+    }
+    setTimeout(() => setSaving(false), 500);
+  };
+
+  const handleSetRoleModel = (role: RoleName, model: string) => {
+    handleChangeRole(role, { model });
+  };
+
+  const handleSimpleModelChange = async (model: string) => {
+    const next: RolesMap = ROLE_NAMES.reduce((acc, r) => {
+      acc[r] = { ...roles[r], model };
+      return acc;
+    }, {} as RolesMap);
+    setRoles(next);
+    setSaving(true);
+    if (window.redbusAPI) {
+      await window.redbusAPI.saveProviderConfigs({ ...keys, roles: next });
+    }
+    setTimeout(() => setSaving(false), 500);
+  };
+
+  const handleCopyPlannerToAll = async () => {
+    const plannerBinding = roles.planner;
+    if (!plannerBinding?.model) return;
+    const next: RolesMap = ROLE_NAMES.reduce((acc, r) => {
+      acc[r] = { model: plannerBinding.model, thinkingLevel: plannerBinding.thinkingLevel, temperature: plannerBinding.temperature };
+      return acc;
+    }, {} as RolesMap);
+    setRoles(next);
+    setSaving(true);
+    if (window.redbusAPI) {
+      await window.redbusAPI.saveProviderConfigs({ ...keys, roles: next });
+    }
+    setTimeout(() => setSaving(false), 500);
+  };
+
+  const handleResetRoles = async () => {
+    setRoles(DEFAULT_ROLES);
+    setSaving(true);
+    if (window.redbusAPI) {
+      await window.redbusAPI.saveProviderConfigs({ ...keys, roles: DEFAULT_ROLES });
     }
     setTimeout(() => setSaving(false), 500);
   };
@@ -460,9 +542,46 @@ export default function App() {
     } catch (e) { console.warn('[Settings] Could not enumerate audio devices:', e); }
   };
 
+  const loadVaultSecrets = async () => {
+    if (!window.redbusAPI) return;
+    const vaultRes = await window.redbusAPI.listVaultSecrets();
+    if (vaultRes.status === 'OK' && vaultRes.data) setVaultSecrets(vaultRes.data);
+  };
+
+  const loadDigestCuration = async () => {
+    if (!window.redbusAPI) return;
+    const res = await window.redbusAPI.getAppSetting('comms.digest.curation');
+    if (res.status === 'OK' && res.data) {
+      try {
+        const parsed = JSON.parse(res.data);
+        const merged: DigestCurationConfig = { ...DEFAULT_DIGEST_CURATION, ...parsed };
+        setDigestCuration(merged);
+        setCustomAckDraft(merged.customAckPatterns.join(', '));
+      } catch (e) { console.warn('[Settings] bad digest curation JSON:', e); }
+    } else {
+      setCustomAckDraft(DEFAULT_DIGEST_CURATION.customAckPatterns.join(', '));
+    }
+    setDigestCurationLoaded(true);
+  };
+
+  const parseAckDraft = (raw: string): string[] =>
+    raw.split(',').map(s => s.trim()).filter(Boolean);
+
+  const handleSaveDigestCuration = async () => {
+    if (!window.redbusAPI) return;
+    setDigestSaveStatus('saving');
+    const toSave: DigestCurationConfig = { ...digestCuration, customAckPatterns: parseAckDraft(customAckDraft) };
+    setDigestCuration(toSave);
+    await window.redbusAPI.setAppSetting('comms.digest.curation', JSON.stringify(toSave));
+    setDigestSaveStatus('saved');
+    setTimeout(() => setDigestSaveStatus('idle'), 1500);
+  };
+
   const handleViewChange = (view: string) => {
     setActiveView(view);
     if (view === 'settings' && !proactivityTimingsLoaded) loadProactivitySettings();
+    if (view === 'settings') loadVaultSecrets();
+    if (view === 'settings' && !digestCurationLoaded) loadDigestCuration();
   };
 
   const handleAddVaultSecret = async () => {
@@ -524,68 +643,41 @@ export default function App() {
     setShowLangWarning(false);
   };
 
-  // Set greeting for new users only after language is decided
+  // Seed the greeting only after onboarding completes, otherwise the effect
+  // fires with the English default and latches the message before the user
+  // has chosen a language in the wizard.
   useEffect(() => {
-    if (loaded && profileExists === false && appLanguage && messages.length === 0) {
+    if (loaded && setupCompleted && appLanguage && messages.length === 0) {
       setMessages([{ id: uuidv4(), role: 'assistant', content: t.app.greeting }]);
     }
-  }, [loaded, profileExists, appLanguage, messages.length, t.app.greeting]);
+  }, [loaded, setupCompleted, appLanguage, messages.length, t.app.greeting]);
 
   if (!loaded || profileExists === null) return <div className="loading">{t.app.loading}</div>;
 
-  // ── First-launch language selection overlay ──
-  if (appLanguage === null) {
+  // ── First-launch LLM / role setup overlay (Spec 08) — language picker lives inside the Welcome step ──
+  if (setupCompleted === false) {
     return (
-      <div className="lang-setup-overlay">
-        <div className="lang-setup-card">
-
-          {/* Brand mark */}
-          <div className="lang-setup-logo">
-            <span className="lang-setup-dot" />
-            <span>redbus</span>
-          </div>
-
-          {/* Headline */}
-          <h2 className="lang-setup-title">{t.langSetup.headline}</h2>
-
-          {/* Presentation text */}
-          <p className="lang-setup-body">
-            {t.langSetup.body}
-            <br /><br />
-            <strong>{t.langSetup.tagline}</strong>
-          </p>
-
-          {/* Divider */}
-          <div className="lang-setup-divider">
-            <span>{t.langSetup.divider}</span>
-          </div>
-
-          {/* Language options */}
-          <div className="lang-setup-options">
-            <button
-              id="lang-btn-en"
-              className="lang-option-btn"
-              onClick={() => handleChooseLanguage('en')}
-            >
-              <FlagEmoji flag="🇬🇧" size={36} />
-              <span className="lang-name">{t.langSetup.en.name}</span>
-              <span className="lang-desc">{t.langSetup.en.desc}</span>
-            </button>
-            <button
-              id="lang-btn-pt"
-              className="lang-option-btn"
-              onClick={() => handleChooseLanguage('pt-BR')}
-            >
-              <FlagEmoji flag="🇧🇷" size={36} />
-              <span className="lang-name">{t.langSetup.ptBR.name}</span>
-              <span className="lang-desc">{t.langSetup.ptBR.desc}</span>
-            </button>
-          </div>
-
-          <p className="lang-setup-footnote">{t.langSetup.footnote}</p>
-
-        </div>
-      </div>
+      <OnboardingShell
+        language={appLanguage}
+        onLanguageChange={handleChooseLanguage}
+        onComplete={async () => {
+          setSetupCompleted(true);
+          // Re-hydrate keys and roles from the freshly-persisted config.
+          const response = await window.redbusAPI.getProviderConfigs();
+          if (response.status === 'OK' && response.data) {
+            const { openAiKey, anthropicKey, googleKey, ollamaUrl, ollamaCloudKey, ollamaCloudUrl, roles: loadedRoles } = response.data;
+            setKeys({
+              openAiKey: openAiKey || '',
+              anthropicKey: anthropicKey || '',
+              googleKey: googleKey || '',
+              ollamaUrl: ollamaUrl || 'http://localhost:11434',
+              ollamaCloudKey: ollamaCloudKey || '',
+              ollamaCloudUrl: ollamaCloudUrl || 'https://ollama.com',
+            });
+            if (loadedRoles) setRoles({ ...DEFAULT_ROLES, ...loadedRoles } as RolesMap);
+          }
+        }}
+      />
     );
   }
 
@@ -640,8 +732,8 @@ export default function App() {
           <MeetingsView initialMeetingId={initialMeetingId} onMeetingSelected={() => setInitialMeetingId(null)} />
         )}
 
-        {activeView === 'inbox' && (
-          <InboxView />
+        {activeView === 'comms' && (
+          <CommunicationHub />
         )}
 
         {activeView === 'todos' && (
@@ -664,7 +756,7 @@ export default function App() {
               <button className={`settings-tab${settingsTab === 'llm' ? ' active' : ''}`} onClick={() => setSettingsTab('llm')}>
                 <BrainCircuit size={15} className="settings-tab-icon" /> {t.settings.tabs.llm}
               </button>
-              <button className={`settings-tab${settingsTab === 'vault' ? ' active' : ''}`} onClick={() => setSettingsTab('vault')}>
+              <button className={`settings-tab${settingsTab === 'vault' ? ' active' : ''}`} onClick={() => { setSettingsTab('vault'); loadVaultSecrets(); }}>
                 <ShieldCheck size={15} className="settings-tab-icon" /> {t.settings.tabs.vault}
               </button>
               <button className={`settings-tab${settingsTab === 'audio' ? ' active' : ''}`} onClick={() => setSettingsTab('audio')}>
@@ -672,6 +764,9 @@ export default function App() {
               </button>
               <button className={`settings-tab${settingsTab === 'proactivity' ? ' active' : ''}`} onClick={() => setSettingsTab('proactivity')}>
                 <Zap size={15} className="settings-tab-icon" /> {t.settings.tabs.proactivity}
+              </button>
+              <button className={`settings-tab${settingsTab === 'digest' ? ' active' : ''}`} onClick={() => { setSettingsTab('digest'); if (!digestCurationLoaded) loadDigestCuration(); }}>
+                <MessagesSquare size={15} className="settings-tab-icon" /> {t.settings.tabs.digest}
               </button>
               <button className={`settings-tab${settingsTab === 'system' ? ' active' : ''}`} onClick={() => setSettingsTab('system')}>
                 <Settings size={15} className="settings-tab-icon" /> {t.settings.tabs.system}
@@ -698,7 +793,7 @@ export default function App() {
                     <OllamaSettings
                       ollamaUrl={keys.ollamaUrl}
                       setOllamaUrl={(url) => setKeys(k => ({ ...k, ollamaUrl: url }))}
-                      onModelSet={handleChangeModel}
+                      onModelSet={handleSetRoleModel}
                       onInstalledChange={setOllamaModels}
                     />
 
@@ -754,63 +849,75 @@ export default function App() {
 
                     <section className="settings-section">
                       <div className="section-head">
-                        <h3>{t.settings.llm.orchestration}</h3>
+                        <h3>{t.settings.llm.roles.title}</h3>
                         <p>{t.settings.llm.orchestrationDesc}</p>
                       </div>
-                      <div className="form-grid">
-                        <div className="form-group">
-                          <label>modelo maestro</label>
-                          <select value={models.maestroModel} onChange={e => handleChangeModel('maestroModel', e.target.value)}>
-                            <optgroup label="Anthropic">
-                              {availableModels.anthropic.length > 0 ? availableModels.anthropic.map(m => <option key={m.id} value={m.id}>{m.name}</option>) : <option value="none" disabled>—</option>}
-                            </optgroup>
-                            <optgroup label="OpenAI">
-                              {availableModels.openai.length > 0 ? availableModels.openai.map(m => <option key={m.id} value={m.id}>{m.name}</option>) : <option value="none" disabled>—</option>}
-                            </optgroup>
-                            <optgroup label="Google">
-                              {availableModels.google.length > 0 ? availableModels.google.map(m => <option key={m.id} value={m.id}>{m.name}</option>) : <option value="none" disabled>—</option>}
-                            </optgroup>
-                            <optgroup label="Ollama Cloud">
-                              {availableModels.ollamaCloud.length > 0 ? availableModels.ollamaCloud.map(m => <option key={m.id} value={`ollama-cloud/${m.id}`}>{m.name}</option>) : <option value="none" disabled>—</option>}
-                            </optgroup>
-                            <optgroup label="atual">
-                              <option value={models.maestroModel} disabled>{models.maestroModel}</option>
-                            </optgroup>
-                            <optgroup label="Ollama (Local)">
-                              {ollamaModels.map(m => (
-                                <option key={m} value={`ollama/${m}`}>{m}</option>
-                              ))}
-                              {ollamaModels.length === 0 && <option value="" disabled>Nenhum modelo baixado</option>}
-                            </optgroup>
-                          </select>
-                        </div>
-                        <div className="form-group">
-                          <label>modelo worker</label>
-                          <select value={models.workerModel} onChange={e => handleChangeModel('workerModel', e.target.value)}>
-                            <optgroup label="Google">
-                              {availableModels.google.length > 0 ? availableModels.google.map(m => <option key={m.id} value={m.id}>{m.name}</option>) : <option value="none" disabled>—</option>}
-                            </optgroup>
-                            <optgroup label="Anthropic">
-                              {availableModels.anthropic.length > 0 ? availableModels.anthropic.map(m => <option key={m.id} value={m.id}>{m.name}</option>) : <option value="none" disabled>—</option>}
-                            </optgroup>
-                            <optgroup label="OpenAI">
-                              {availableModels.openai.length > 0 ? availableModels.openai.map(m => <option key={m.id} value={m.id}>{m.name}</option>) : <option value="none" disabled>—</option>}
-                            </optgroup>
-                            <optgroup label="Ollama Cloud">
-                              {availableModels.ollamaCloud.length > 0 ? availableModels.ollamaCloud.map(m => <option key={m.id} value={`ollama-cloud/${m.id}`}>{m.name}</option>) : <option value="none" disabled>—</option>}
-                            </optgroup>
-                            <optgroup label="atual">
-                              <option value={models.workerModel} disabled>{models.workerModel}</option>
-                            </optgroup>
-                            <optgroup label="Ollama (Local)">
-                              {ollamaModels.map(m => (
-                                <option key={m} value={`ollama/${m}`}>{m}</option>
-                              ))}
-                              {ollamaModels.length === 0 && <option value="" disabled>Nenhum modelo baixado</option>}
-                            </optgroup>
-                          </select>
-                        </div>
+
+                      <div style={{ display: 'flex', gap: '12px', alignItems: 'center', marginBottom: '12px', fontSize: '11px' }}>
+                        <label style={{ display: 'flex', gap: '4px', alignItems: 'center', cursor: 'pointer' }}>
+                          <input
+                            type="radio"
+                            checked={rolesMode === 'simple'}
+                            onChange={() => setRolesMode('simple')}
+                          />
+                          {t.settings.llm.roles.simpleMode}
+                        </label>
+                        <label style={{ display: 'flex', gap: '4px', alignItems: 'center', cursor: 'pointer' }}>
+                          <input
+                            type="radio"
+                            checked={rolesMode === 'advanced'}
+                            onChange={() => setRolesMode('advanced')}
+                          />
+                          {t.settings.llm.roles.advancedMode}
+                        </label>
+                        <div style={{ flex: 1 }} />
+                        <button className="save-btn" style={{ fontSize: '10px' }} onClick={handleCopyPlannerToAll}>
+                          {t.settings.llm.roles.copyPlannerToAll}
+                        </button>
+                        <button className="save-btn" style={{ fontSize: '10px' }} onClick={handleResetRoles}>
+                          {t.settings.llm.roles.resetDefaults}
+                        </button>
                       </div>
+
+                      {rolesMode === 'simple' ? (
+                        <div className="form-group">
+                          <label>model (all roles)</label>
+                          <select value={roles.planner?.model ?? ''} onChange={e => handleSimpleModelChange(e.target.value)}>
+                            <optgroup label="Anthropic">
+                              {availableModels.anthropic.length > 0 ? availableModels.anthropic.map(m => <option key={m.id} value={m.id}>{m.name}</option>) : <option value="none" disabled>—</option>}
+                            </optgroup>
+                            <optgroup label="OpenAI">
+                              {availableModels.openai.length > 0 ? availableModels.openai.map(m => <option key={m.id} value={m.id}>{m.name}</option>) : <option value="none" disabled>—</option>}
+                            </optgroup>
+                            <optgroup label="Google">
+                              {availableModels.google.length > 0 ? availableModels.google.map(m => <option key={m.id} value={m.id}>{m.name}</option>) : <option value="none" disabled>—</option>}
+                            </optgroup>
+                            <optgroup label="Ollama Cloud">
+                              {availableModels.ollamaCloud.length > 0 ? availableModels.ollamaCloud.map(m => <option key={m.id} value={`ollama-cloud/${m.id}`}>{m.name}</option>) : <option value="none" disabled>—</option>}
+                            </optgroup>
+                            <optgroup label="atual">
+                              <option value={roles.planner?.model ?? ''} disabled>{roles.planner?.model ?? ''}</option>
+                            </optgroup>
+                            <optgroup label="Ollama (Local)">
+                              {ollamaModels.map(m => <option key={m} value={`ollama/${m}`}>{m}</option>)}
+                              {ollamaModels.length === 0 && <option value="" disabled>Nenhum modelo baixado</option>}
+                            </optgroup>
+                          </select>
+                        </div>
+                      ) : (
+                        ROLE_NAMES.map(roleName => (
+                          <RolePicker
+                            key={roleName}
+                            role={roleName}
+                            title={t.settings.llm.roles[roleName].name}
+                            description={t.settings.llm.roles[roleName].description}
+                            binding={roles[roleName] ?? { model: '' }}
+                            availableModels={availableModels}
+                            ollamaModels={ollamaModels}
+                            onChange={(patch) => handleChangeRole(roleName, patch)}
+                          />
+                        ))
+                      )}
                     </section>
                   </div>
                 )}
@@ -1037,6 +1144,144 @@ export default function App() {
                   </div>
                 )}
 
+                {/* ═══ TAB: Digest ═══ */}
+                {settingsTab === 'digest' && (
+                  <div className="settings-panel">
+                    <header className="top-bar">
+                      <div>
+                        <h1>{t.settings.digest.title}</h1>
+                        <p className="subtitle">{t.settings.digest.subtitle}</p>
+                      </div>
+                      <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                        <button className="save-btn" style={{ fontSize: '10px' }} onClick={() => { setDigestCuration(DEFAULT_DIGEST_CURATION); setCustomAckDraft(DEFAULT_DIGEST_CURATION.customAckPatterns.join(', ')); }}>
+                          {t.settings.digest.resetDefaults}
+                        </button>
+                        <button className="save-btn" onClick={handleSaveDigestCuration}>
+                          {digestSaveStatus === 'saving' ? t.settings.digest.saving : digestSaveStatus === 'saved' ? t.settings.digest.saved : t.settings.digest.save}
+                        </button>
+                      </div>
+                    </header>
+
+                    {/* ── Noise filter ── */}
+                    <section className="settings-section">
+                      <div className="section-head">
+                        <h3>{t.settings.digest.noise.title}</h3>
+                        <p>{t.settings.digest.noise.desc}</p>
+                      </div>
+                      <div className="governance-card">
+                        <div className="governance-row">
+                          <div className="governance-label">
+                            <span className="governance-title">{t.settings.digest.noise.dropAcks}</span>
+                            <span className="governance-desc">{t.settings.digest.noise.dropAcksDesc}</span>
+                          </div>
+                          <input
+                            type="checkbox"
+                            checked={digestCuration.dropAcks}
+                            onChange={e => setDigestCuration(c => ({ ...c, dropAcks: e.target.checked }))}
+                          />
+                        </div>
+                        <div className="governance-row" style={{ borderTop: '1px solid var(--border)', paddingTop: '12px' }}>
+                          <div className="governance-label">
+                            <span className="governance-title">{t.settings.digest.noise.minLength}</span>
+                            <span className="governance-desc">{t.settings.digest.noise.minLengthDesc}</span>
+                          </div>
+                          <input
+                            type="number" min={0} max={200}
+                            style={{ width: '65px', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: '4px', color: 'var(--text-primary)', padding: '4px 6px', fontSize: '12px', fontFamily: 'var(--font-mono)' }}
+                            value={digestCuration.minLength}
+                            onChange={e => setDigestCuration(c => ({ ...c, minLength: Math.max(0, Number(e.target.value)) }))}
+                          />
+                        </div>
+                        <div className="governance-row" style={{ borderTop: '1px solid var(--border)', paddingTop: '12px', flexDirection: 'column', alignItems: 'stretch' }}>
+                          <div className="governance-label">
+                            <span className="governance-title">{t.settings.digest.noise.customAckPatterns}</span>
+                            <span className="governance-desc">{t.settings.digest.noise.customAckPatternsDesc}</span>
+                          </div>
+                          <input
+                            type="text"
+                            placeholder={t.settings.digest.noise.customAckPatternsPlaceholder}
+                            style={{ marginTop: '8px', width: '100%', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: '4px', color: 'var(--text-primary)', padding: '6px 8px', fontSize: '12px', fontFamily: 'var(--font-mono)' }}
+                            value={customAckDraft}
+                            onChange={e => setCustomAckDraft(e.target.value)}
+                            onBlur={() => setDigestCuration(c => ({ ...c, customAckPatterns: parseAckDraft(customAckDraft) }))}
+                          />
+                        </div>
+                      </div>
+                    </section>
+
+                    {/* ── Signal preservation ── */}
+                    <section className="settings-section">
+                      <div className="section-head">
+                        <h3>{t.settings.digest.signal.title}</h3>
+                        <p>{t.settings.digest.signal.desc}</p>
+                      </div>
+                      <div className="governance-card">
+                        <div className="governance-row">
+                          <div className="governance-label">
+                            <span className="governance-title">{t.settings.digest.signal.signalLength}</span>
+                            <span className="governance-desc">{t.settings.digest.signal.signalLengthDesc}</span>
+                          </div>
+                          <input
+                            type="number" min={20} max={1000}
+                            style={{ width: '65px', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: '4px', color: 'var(--text-primary)', padding: '4px 6px', fontSize: '12px', fontFamily: 'var(--font-mono)' }}
+                            value={digestCuration.signalLength}
+                            onChange={e => setDigestCuration(c => ({ ...c, signalLength: Math.max(20, Number(e.target.value)) }))}
+                          />
+                        </div>
+                        <div className="governance-row" style={{ borderTop: '1px solid var(--border)', paddingTop: '12px' }}>
+                          <div className="governance-label">
+                            <span className="governance-desc" style={{ fontStyle: 'italic' }}>{t.settings.digest.signal.alwaysSignalHint}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </section>
+
+                    {/* ── Thread grouping ── */}
+                    <section className="settings-section">
+                      <div className="section-head">
+                        <h3>{t.settings.digest.thread.title}</h3>
+                        <p>{t.settings.digest.thread.desc}</p>
+                      </div>
+                      <div className="governance-card">
+                        <div className="governance-row">
+                          <div className="governance-label">
+                            <span className="governance-title">{t.settings.digest.thread.neutralCap}</span>
+                            <span className="governance-desc">{t.settings.digest.thread.neutralCapDesc}</span>
+                          </div>
+                          <input
+                            type="number" min={0} max={20}
+                            style={{ width: '65px', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: '4px', color: 'var(--text-primary)', padding: '4px 6px', fontSize: '12px', fontFamily: 'var(--font-mono)' }}
+                            value={digestCuration.neutralCapPerThread}
+                            onChange={e => setDigestCuration(c => ({ ...c, neutralCapPerThread: Math.max(0, Number(e.target.value)) }))}
+                          />
+                        </div>
+                        <div className="governance-row" style={{ borderTop: '1px solid var(--border)', paddingTop: '12px' }}>
+                          <div className="governance-label">
+                            <span className="governance-title">{t.settings.digest.thread.alwaysKeepFirst}</span>
+                            <span className="governance-desc">{t.settings.digest.thread.alwaysKeepFirstDesc}</span>
+                          </div>
+                          <input
+                            type="checkbox"
+                            checked={digestCuration.alwaysKeepFirst}
+                            onChange={e => setDigestCuration(c => ({ ...c, alwaysKeepFirst: e.target.checked }))}
+                          />
+                        </div>
+                        <div className="governance-row" style={{ borderTop: '1px solid var(--border)', paddingTop: '12px' }}>
+                          <div className="governance-label">
+                            <span className="governance-title">{t.settings.digest.thread.alwaysKeepLast}</span>
+                            <span className="governance-desc">{t.settings.digest.thread.alwaysKeepLastDesc}</span>
+                          </div>
+                          <input
+                            type="checkbox"
+                            checked={digestCuration.alwaysKeepLast}
+                            onChange={e => setDigestCuration(c => ({ ...c, alwaysKeepLast: e.target.checked }))}
+                          />
+                        </div>
+                      </div>
+                    </section>
+                  </div>
+                )}
+
                 {/* ═══ TAB: Sistema ═══ */}
                 {settingsTab === 'system' && (
                   <div className="settings-panel">
@@ -1127,6 +1372,32 @@ export default function App() {
                             <option value="en">🇬🇧 English</option>
                             <option value="pt-BR">🇧🇷 Português (BR)</option>
                           </select>
+                        </div>
+                      </div>
+                    </section>
+
+                    <section className="settings-section">
+                      <div className="section-head">
+                        <h3>{t.settings.system.resetSetup}</h3>
+                        <p>{t.settings.system.resetSetupDesc}</p>
+                      </div>
+                      <div className="governance-card">
+                        <div className="governance-row">
+                          <div className="governance-label">
+                            <span className="governance-title">{t.settings.system.resetSetup}</span>
+                            <span className="governance-desc">{t.settings.system.resetSetupDesc}</span>
+                          </div>
+                          <button
+                            className="governance-btn"
+                            onClick={async () => {
+                              const res = await window.redbusAPI.resetSetup();
+                              if (res.status === 'OK') {
+                                setSetupCompleted(false);
+                              }
+                            }}
+                          >
+                            {t.settings.system.resetSetupBtn}
+                          </button>
                         </div>
                       </div>
                     </section>

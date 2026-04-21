@@ -7,6 +7,8 @@ const api: RedBusAPI = {
   getProviderConfigs: () => ipcRenderer.invoke('settings:get'),
   getUserProfile: () => ipcRenderer.invoke('get-user-profile'),
   saveUserProfile: (profile) => ipcRenderer.invoke('save-user-profile', profile),
+  getProfessionalProfile: () => ipcRenderer.invoke('user-profile:get-professional'),
+  saveProfessionalProfile: (payload) => ipcRenderer.invoke('user-profile:save-professional', payload),
   saveProviderConfigs: (configs) => ipcRenderer.invoke('settings:save', configs),
   saveProviderConfig: (provider, apiKey, defaultModel) => ipcRenderer.invoke('settings:save-provider', provider, apiKey, defaultModel),
   runWorkerTest: (url, instruction) => ipcRenderer.invoke('run-worker-test', url, instruction),
@@ -18,6 +20,8 @@ const api: RedBusAPI = {
   resumeViewExtraction: (viewId) => ipcRenderer.invoke('browser:resume', viewId),
   resumeAuth: (viewId) => ipcRenderer.invoke('browser:resume-auth', viewId),
   respondToConsent: (requestId, approved) => ipcRenderer.invoke('hitl:respond', requestId, approved),
+  abortAgentRun: (sessionId) => ipcRenderer.invoke('runAgent:abort', sessionId),
+  listActiveAgentRuns: () => ipcRenderer.invoke('runAgent:active'),
 
   onAuthRequired: (callback) => {
     ipcRenderer.removeAllListeners('auth-required');
@@ -37,7 +41,7 @@ const api: RedBusAPI = {
   },
   fetchAvailableModels: (provider, apiKey, customUrl) => ipcRenderer.invoke('settings:fetch-models', provider, apiKey, customUrl),
   executeSpec: (specId) => ipcRenderer.invoke('orchestrator:execute-spec', specId),
-  executePythonSpec: (specId) => ipcRenderer.invoke('orchestrator:execute-python-spec', specId),
+  executeSkillTask: (specId) => ipcRenderer.invoke('orchestrator:execute-skill-task', specId),
 
   getOllamaStatus: (url) => ipcRenderer.invoke('ollama:status', url),
   listOllamaModels: (url) => ipcRenderer.invoke('ollama:list', url),
@@ -52,6 +56,12 @@ const api: RedBusAPI = {
   getArchives: () => ipcRenderer.invoke('chat:get-archives'),
   deleteArchive: (filename) => ipcRenderer.invoke('chat:delete-archive', filename),
   factoryReset: () => ipcRenderer.invoke('factory-reset'),
+
+  // Onboarding / Setup
+  getSetupStatus: () => ipcRenderer.invoke('setup:status'),
+  markSetupComplete: () => ipcRenderer.invoke('setup:complete'),
+  resetSetup: () => ipcRenderer.invoke('setup:reset'),
+  recommendRoles: (availableByProvider) => ipcRenderer.invoke('setup:recommend-roles', availableByProvider),
 
   // Vault
   saveVaultSecret: (id, serviceName, token) => ipcRenderer.invoke('vault:save-secret', id, serviceName, token),
@@ -97,6 +107,7 @@ const api: RedBusAPI = {
   // App Settings
   getAppSetting: (key) => ipcRenderer.invoke('app-settings:get', key),
   setAppSetting: (key, value) => ipcRenderer.invoke('app-settings:set', key, value),
+  listThinkingLevels: (model) => ipcRenderer.invoke('thinking:list-levels', model),
   cleanupNow: () => ipcRenderer.invoke('settings:cleanup-now'),
   onAppSettingChanged: (callback: (data: { key: string; value: string }) => void) => {
     ipcRenderer.removeAllListeners('app-settings:changed');
@@ -211,24 +222,28 @@ const api: RedBusAPI = {
     ipcRenderer.on('activity:log-entry', (_, entry) => callback(entry));
   },
 
-  // Unified Inbox
-  authenticateChannel: (channelId: string) => ipcRenderer.invoke('inbox:authenticate', channelId),
-  disconnectChannel: (channelId: string) => ipcRenderer.invoke('inbox:disconnect', channelId),
-  getChannelStatuses: () => ipcRenderer.invoke('inbox:get-statuses'),
-  triggerBriefing: () => ipcRenderer.invoke('inbox:trigger-briefing'),
-  generateDraftReplies: () => ipcRenderer.invoke('inbox:generate-drafts'),
-  injectDraft: (channelId: string, sender: string, draftText: string) => ipcRenderer.invoke('inbox:inject-draft', channelId, sender, draftText),
-  onBriefingReady: (callback: (data: any) => void) => {
-    ipcRenderer.removeAllListeners('inbox:briefing-ready');
-    ipcRenderer.on('inbox:briefing-ready', (_, data) => callback(data));
+  // Spec 11 — Communications Hub (Microsoft Graph)
+  commsAuthStart: () => ipcRenderer.invoke('comms:auth-start'),
+  commsAuthStatus: () => ipcRenderer.invoke('comms:auth-status'),
+  commsAuthDisconnect: () => ipcRenderer.invoke('comms:auth-disconnect'),
+  commsList: (filter?: { since?: string; until?: string; limit?: number; sources?: ('outlook' | 'teams')[] }) => ipcRenderer.invoke('comms:list', filter),
+  commsRefresh: () => ipcRenderer.invoke('comms:refresh'),
+  commsBackfillDate: (date: string) => ipcRenderer.invoke('comms:backfill-date', date),
+  commsGenerateDigest: (payload: { date?: string; itemIds: string[] }) => ipcRenderer.invoke('comms:generate-digest', payload),
+  commsListFilterPresets: () => ipcRenderer.invoke('comms:filter-presets'),
+  commsSaveFilterPreset: (preset: any) => ipcRenderer.invoke('comms:filter-presets-save', preset),
+  commsDeleteFilterPreset: (id: string) => ipcRenderer.invoke('comms:filter-presets-delete', id),
+  onCommsNewItems: (callback: (data: { count: number; latestTimestamp: string }) => void) => {
+    ipcRenderer.removeAllListeners('comms:new-items');
+    ipcRenderer.on('comms:new-items', (_, data) => callback(data));
   },
-  onChannelStatusChanged: (callback: (data: any) => void) => {
-    ipcRenderer.removeAllListeners('inbox:channel-status-changed');
-    ipcRenderer.on('inbox:channel-status-changed', (_, data) => callback(data));
+  onCommsAuthStatus: (callback: (data: any) => void) => {
+    ipcRenderer.removeAllListeners('comms:auth-status');
+    ipcRenderer.on('comms:auth-status', (_, data) => callback(data));
   },
-  onDraftsReady: (callback: (data: any) => void) => {
-    ipcRenderer.removeAllListeners('inbox:drafts-ready');
-    ipcRenderer.on('inbox:drafts-ready', (_, data) => callback(data));
+  onCommsBackfillProgress: (callback: (data: { date: string; stage: 'start' | 'outlook' | 'teams' | 'done'; status: 'running' | 'ok' | 'error'; count?: number; error?: string }) => void) => {
+    ipcRenderer.removeAllListeners('comms:backfill-progress');
+    ipcRenderer.on('comms:backfill-progress', (_, data) => callback(data));
   },
 
   // To-Do system

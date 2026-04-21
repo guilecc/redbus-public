@@ -19,7 +19,7 @@ describe('LLM Service - Worker Test', () => {
     const mockDb = {
       prepare: vi.fn().mockReturnValue({
         get: vi.fn().mockReturnValue({
-          workerModel: 'gpt-4o-mini',
+          roles: JSON.stringify({ executor: { model: 'gpt-4o-mini', thinkingLevel: 'off' } }),
           openAiKey: 'sk-test'
         })
       })
@@ -45,7 +45,7 @@ describe('LLM Service - Worker Test', () => {
     const mockDb = {
       prepare: vi.fn().mockReturnValue({
         get: vi.fn().mockReturnValue({
-          workerModel: 'claude-3-5-haiku',
+          roles: JSON.stringify({ executor: { model: 'claude-3-5-haiku', thinkingLevel: 'off' } }),
           anthropicKey: 'ant-test'
         })
       })
@@ -72,7 +72,7 @@ describe('LLM Service - Worker Test', () => {
     const mockDb = {
       prepare: vi.fn().mockReturnValue({
         get: vi.fn().mockReturnValue({
-          workerModel: 'gemini-2.5-flash',
+          roles: JSON.stringify({ executor: { model: 'gemini-2.5-flash', thinkingLevel: 'off' } }),
           googleKey: 'ggle-test'
         })
       })
